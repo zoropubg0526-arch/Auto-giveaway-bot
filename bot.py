@@ -21,10 +21,13 @@ def health():
 # ============================================================
 TOKEN = "8960961388:AAFeBpbgZNMDVLogNfl3GSeFnAxqdtRpy54"
 ADMIN_ID = 6531314640
+COOLDOWN_HOURS = 24
 
 REQUIRED_CHATS = [
+    {"id": "@TnnrCPM", "name": "TnnrCPM Channel"},
     {"id": "@TnnrChat", "name": "TnnrChat Group"},
     {"id": "@markmwehehestore", "name": "MarkMwehehe Store"},
+    {"id": "@markmwhehe", "name": "Mark Mwehehe Main Channel"},
     {"id": -1003994249946, "name": "Tnnr Main Group"},
 ]
 
@@ -32,22 +35,33 @@ FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
 DB_URL = "https://cpm2bpt-default-rtdb.europe-west1.firebasedatabase.app"
 
 # ============================================================
-# ✅ CUSTOM EMOJI MAPPING
+# ✅ CUSTOM EMOJI MAPPING (COMPLETE)
 # ============================================================
 CUSTOM_EMOJI_MAP = {
     '😂': '5406913184810409829', '😄': '5386587088873331829',
     '😍': '5323470315370585285', '😭': '5379656338802482888',
     '🤑': '5427107837568360763', '👑': '5938534225140519372',
-    '🔥': '6001061381237903602', '⚡': '6061916283228655823',
+    '🔥': '6001061381237903602', '⚡': '6100289024289672793',
     '💎': '6064293500382350516', '❌': '6064642968986323772',
     '🤨': '6134245834595765950', '👹': '6142914800880979809',
     '👀': '5834733550020072624', '💙': '6269557847248342937',
     '⚠️': '6100590432209604692', '😆': '5375135722514685501',
-    '😮': '5456662929166309849', '😎': '6062259841957632787',
+    '😮': '5456662929166309849', '😎': '5195360348693078341',
     '👤': '5258011929993026890', '🎮': '5258508428212445001',
     '🚘': '5366286487862124799', '✅': '5197288647275071607',
     '🎉': '6001197385672298829', '📁': '5357315181649076022',
-    '📊': '5192886773948107844',
+    '📊': '5192886773948107844', '⏳': '5192988444413938411',
+    '🚀': '5190768392998504411', '💰': '5192683149548605430',
+    '📲': '5192998636371330526',
+    '💃': '5373112999076699207', '😠': '5348119373200506812',
+    '😡': '5251301176737013980', '🦁': '5980821811711972473',
+    '☑️': '5936230155574842929', '👌': '6001451188174723066',
+    '🗿': '6001226634399585063', '🚗': '5375593780776805206',
+    '🏎': '5391327195169831190', '😌': '5958585443170651565',
+    '⚡1': '6100277122935295595', '⚡2': '6100472578307002133',
+    '⚡3': '6102404476071579522', '⚡4': '6100671388048166850',
+    '⚡5': '6100278127957643014',
+    '🥵': '6307832826263768178',  # ADMIN-ONLY
 }
 
 def get_custom_entities(text):
@@ -56,7 +70,18 @@ def get_custom_entities(text):
     i = 0
     while i < len(text):
         ch = text[i]
-        utf16_len = len(ch.encode('utf-16-le')) // 2
+        if i + 1 < len(text) and text[i:i+2] == '☑️':
+            ch = '☑️'
+            utf16_len = 2
+        elif i + 1 < len(text) and text[i:i+2] == '✔️':
+            ch = '✔️'
+            utf16_len = 2
+        elif i + 1 < len(text) and text[i:i+2] in ['⚡1', '⚡2', '⚡3', '⚡4', '⚡5']:
+            ch = text[i:i+2]
+            utf16_len = 2
+        else:
+            utf16_len = len(ch.encode('utf-16-le')) // 2
+        
         if ch in CUSTOM_EMOJI_MAP:
             entities.append(MessageEntity(
                 type="custom_emoji",
@@ -65,18 +90,27 @@ def get_custom_entities(text):
                 custom_emoji_id=CUSTOM_EMOJI_MAP[ch]
             ))
         offset += utf16_len
-        i += 1
+        i += 1 if utf16_len == 1 else 2
     return entities
 
 async def send_custom(chat_id, text, context, reply_markup=None):
     entities = get_custom_entities(text)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        reply_markup=reply_markup,
-        parse_mode=None,
-        entities=entities if entities else None
-    )
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=None,
+            entities=entities if entities else None
+        )
+    except Exception as e:
+        print(f"⚠️ Custom emoji error: {e}. Sending without entities.")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=None
+        )
 
 async def reply_custom(update, text, context, reply_markup=None):
     await send_custom(update.effective_chat.id, text, context, reply_markup)
@@ -99,6 +133,9 @@ async def edit_custom(query, text, reply_markup=None):
             except:
                 pass
 
+# ============================================================
+# ✅ FIREBASE HELPERS
+# ============================================================
 def db_put(path, data):
     url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
     return requests.put(url, json=data).status_code in (200, 204)
@@ -117,6 +154,9 @@ def db_push(path, data):
     r = requests.post(url, json=data)
     return r.status_code in (200, 204)
 
+# ============================================================
+# ✅ GIVEAWAY DATA
+# ============================================================
 ACCOUNT_POOLS = {
     "cpm1_normal": [],
     "cpm2_normal": [],
@@ -126,6 +166,116 @@ ACCOUNT_POOLS = {
 
 ADD_ACCOUNT_SESSIONS = {}
 MEMBERSHIP_CACHE = {}
+
+# ============================================================
+# ✅ EVENT SYSTEM
+# ============================================================
+EVENT_TYPES = {
+    "default": {
+        "name": "Default",
+        "normal_limit": 1,
+        "unlock_coin_limit": 1,
+        "cooldown_hours": 24,
+        "timer_hours": 0,
+    },
+    "claimagain": {
+        "name": "Claim Again",
+        "normal_limit": 3,
+        "unlock_coin_limit": 3,
+        "cooldown_hours": 0,
+        "timer_hours": 1,
+    },
+    "partytime": {
+        "name": "Party Time",
+        "normal_limit": 10,
+        "unlock_coin_limit": 5,
+        "cooldown_hours": 0,
+        "timer_hours": 5,
+    }
+}
+
+def get_event_limits(event_type):
+    return EVENT_TYPES.get(event_type, EVENT_TYPES["default"])
+
+def get_event_claim_count(user_id, event_type):
+    data = db_get(f"giveaway/event_claims/{user_id}/{event_type}") or {}
+    return {
+        "normal": data.get("normal", 0),
+        "unlock": data.get("unlock", 0),
+        "coin": data.get("coin", 0),
+        "total": data.get("total", 0)
+    }
+
+def increment_event_claim(user_id, event_type, account_type):
+    limits = get_event_limits(event_type)
+    current = get_event_claim_count(user_id, event_type)
+    is_unlock = "unlock" in account_type
+    is_coin = "coin" in account_type
+    
+    if is_unlock:
+        current["unlock"] += 1
+    elif is_coin:
+        current["coin"] += 1
+    else:
+        current["normal"] += 1
+    current["total"] += 1
+    
+    db_put(f"giveaway/event_claims/{user_id}/{event_type}", current)
+    return current
+
+def can_claim_event(user_id, event_type, account_type):
+    limits = get_event_limits(event_type)
+    current = get_event_claim_count(user_id, event_type)
+    
+    is_unlock = "unlock" in account_type
+    is_coin = "coin" in account_type
+    
+    if is_unlock or is_coin:
+        if current["unlock"] if is_unlock else current["coin"] >= limits["unlock_coin_limit"]:
+            return False, f"You've reached the max {limits['unlock_coin_limit']} {account_type.upper()} accounts for this event! ⚠️"
+    else:
+        if current["normal"] >= limits["normal_limit"]:
+            return False, f"You've reached the max {limits['normal_limit']} normal accounts for this event! ⚠️"
+    
+    if current["total"] >= limits["normal_limit"] + limits["unlock_coin_limit"] * 2:
+        return False, "You've reached the total max accounts for this event! ⚠️"
+    
+    return True, None
+
+def set_event_timer(event_type, duration_hours):
+    expiry = datetime.now(timezone.utc) + timedelta(hours=duration_hours)
+    db_put(f"giveaway/event_timer/{event_type}", {
+        "start": datetime.now(timezone.utc).isoformat(),
+        "expiry": expiry.isoformat(),
+        "active": True
+    })
+
+def get_event_timer(event_type):
+    data = db_get(f"giveaway/event_timer/{event_type}")
+    if not data:
+        return None
+    expiry = datetime.fromisoformat(data["expiry"])
+    if datetime.now(timezone.utc) >= expiry:
+        db_delete(f"giveaway/event_timer/{event_type}")
+        return None
+    remaining = expiry - datetime.now(timezone.utc)
+    return {
+        "expiry": expiry,
+        "remaining": remaining,
+        "hours": remaining.seconds // 3600,
+        "minutes": (remaining.seconds % 3600) // 60
+    }
+
+def is_event_active(event_type):
+    timer = get_event_timer(event_type)
+    return timer is not None
+
+def get_current_event():
+    if is_event_active("partytime"):
+        return "partytime"
+    elif is_event_active("claimagain"):
+        return "claimagain"
+    return "default"
 
 def load_accounts():
     data = db_get("giveaway/accounts") or {}
@@ -146,6 +296,19 @@ def add_claimed(user_id, account_type, email):
 def has_claimed(user_id, account_type):
     claimed = get_claimed(user_id)
     return any(c["type"] == account_type for c in claimed)
+
+def get_all_claimed():
+    claimed_data = db_get("giveaway/claimed") or {}
+    result = []
+    for user_id, claims in claimed_data.items():
+        for claim in claims:
+            result.append({
+                "user_id": int(user_id),
+                "type": claim.get("type", "unknown"),
+                "email": claim.get("email", "unknown"),
+                "timestamp": claim.get("timestamp", "unknown")
+            })
+    return result
 
 def get_warnings(user_id):
     return db_get(f"giveaway/warnings/{user_id}") or 0
@@ -178,6 +341,34 @@ def set_share_verified(user_id):
 def is_share_verified(user_id):
     return db_get(f"giveaway/share_verified/{user_id}") is not None
 
+def get_last_claim_time(user_id):
+    data = db_get(f"giveaway/last_claim/{user_id}")
+    if data and data.get("timestamp"):
+        return datetime.fromisoformat(data["timestamp"])
+    return None
+
+def set_last_claim_time(user_id):
+    db_put(f"giveaway/last_claim/{user_id}", {"timestamp": datetime.now().isoformat()})
+
+def can_claim(user_id):
+    last = get_last_claim_time(user_id)
+    if not last:
+        return True, None
+    cooldown_end = last + timedelta(hours=COOLDOWN_HOURS)
+    if datetime.now() >= cooldown_end:
+        return True, None
+    remaining = cooldown_end - datetime.now()
+    hours = remaining.seconds // 3600
+    minutes = (remaining.seconds % 3600) // 60
+    return False, f"{hours}h {minutes}m"
+
+def get_all_users():
+    data = db_get("giveaway/users") or {}
+    return [int(uid) for uid in data.keys()]
+
+def add_user(user_id):
+    db_put(f"giveaway/users/{user_id}", {"timestamp": datetime.now().isoformat()})
+
 async def check_membership(context, user_id):
     cache_key = f"{user_id}"
     if cache_key in MEMBERSHIP_CACHE:
@@ -199,8 +390,89 @@ async def check_membership(context, user_id):
     MEMBERSHIP_CACHE[cache_key] = ((True, None), datetime.now())
     return True, None
 
+async def broadcast_message(context, msg, title="📢 ANNOUNCEMENT"):
+    users = get_all_users()
+    if not users:
+        return 0, 0
+    
+    header = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    full_msg = header + msg
+    
+    success = 0
+    failed = 0
+    for uid in users:
+        try:
+            await send_custom(uid, full_msg, context)
+            success += 1
+            await asyncio.sleep(0.1)
+        except Exception:
+            failed += 1
+    return success, failed
+
+# ============================================================
+# ✅ ACCOUNT DETAILS
+# ============================================================
+ACCOUNT_DETAILS = {
+    "cpm1_normal": (
+        "🚘 CPM1 NORMAL GIVEAWAY ACCOUNT\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📌 Account Features:\n"
+        "  ✅ 50M Cash (Max)\n"
+        "  💰 500K / 30K Coins! (Random)\n"
+        "  🆔 Random ID!\n"
+        "  🏠 Houses & Clothes\n"
+        "  🔓 Everything Unlocked!\n\n"
+        "⚡ One account per game – choose wisely!\n\n"
+        "👇 Click the button below to claim:"
+    ),
+    "cpm1_unlock": (
+        "🚘 CPM1 UNLOCK ALL CARS GIVEAWAY ACCOUNT\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📌 Account Features:\n"
+        "  ✅ 50M Cash (Max)\n"
+        "  💰 500K / 30K Coins! (Random)\n"
+        "  🆔 Random ID!\n"
+        "  🏎️ UNLOCK ALL CARS 🏎️\n"
+        "  🏠 Houses & Clothes\n"
+        "  🔓 Everything Unlocked!\n\n"
+        "⚡ One account per game – choose wisely!\n\n"
+        "👇 Click the button below to claim:"
+    ),
+    "cpm2_coin": (
+        "💰 CPM2 COIN GIVEAWAY ACCOUNT\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📌 Account Features:\n"
+        "  ✅ 50M Cash (Max)\n"
+        "  💰 11K-13K Coins\n"
+        "  🎯 20 Slots Unlocked!\n"
+        "  👑 King Rank!\n"
+        "  🚗 4-20 Random Cars\n"
+        "  🎨 Full Customization!\n"
+        "  🏠 Houses + Clothes\n\n"
+        "⚡ One account per game – choose wisely!\n\n"
+        "👇 Click the button below to claim:"
+    ),
+    "cpm2_normal": (
+        "💰 CPM2 NORMAL GIVEAWAY ACCOUNT\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📌 Account Features:\n"
+        "  ✅ 50M Cash (Max)\n"
+        "  🎯 20 Slots Unlocked!\n"
+        "  👑 King Rank!\n"
+        "  🚗 4-20 Random Cars\n"
+        "  🎨 Full Customization!\n"
+        "  🏠 Houses + Clothes\n\n"
+        "⚡ One account per game – choose wisely!\n\n"
+        "👇 Click the button below to claim:"
+    )
+}
+
+# ============================================================
+# ✅ START COMMAND
+# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    add_user(user_id)
 
     if is_banned(user_id):
         await reply_custom(update, "⛔ BANNED ⛔\n\nYou have been permanently banned.\nContact @Maarkryan.", context)
@@ -239,23 +511,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"• {chat['name']}\n"
         msg += f"\n❌ Missing: {missing}\n\n👇 Click to join:"
         keyboard = [
+            [InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")],
             [InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")],
             [InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")],
+            [InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")],
             [InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")],
         ]
         await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     load_accounts()
+    event_type = get_current_event()
+    limits = get_event_limits(event_type)
+    
+    timer_msg = ""
+    if event_type != "default":
+        timer = get_event_timer(event_type)
+        if timer:
+            event_name = EVENT_TYPES[event_type]["name"]
+            timer_msg = f"\n⏳ {event_name} EVENT ACTIVE!\n"
+            timer_msg += f"🕐 Time remaining: {timer['hours']}h {timer['minutes']}m\n"
+            timer_msg += f"⚡ Max claims: {limits['normal_limit']} normal, {limits['unlock_coin_limit']} unlock/coin\n"
+        else:
+            timer_msg = "\n⚠️ Event has ended! Returning to default mode.\n"
+            event_type = "default"
+            limits = get_event_limits("default")
+    
     msg = (
         "🎮 WELCOME TO THE GIVEAWAY! 🎮\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔥 You are verified! Choose your prize:\n\n"
-        "⚡ One account per game per user ⚡\n"
-        "💎 Choose wisely!\n\n"
-        "📊 Available Accounts:\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 Event: {EVENT_TYPES[event_type]['name']}\n"
+        f"📊 Available Accounts:\n"
     )
-
+    
+    all_sold_out = True
     for pool_key, label in [
         ("cpm1_normal", "CPM1 Normal"),
         ("cpm1_unlock", "CPM1 Unlock All Cars"),
@@ -263,20 +552,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("cpm2_coin", "CPM2 Coin Account"),
     ]:
         count = len(ACCOUNT_POOLS.get(pool_key, []))
-        msg += f"  {'❌' if count == 0 else '✅'} {label}: {count} {'(SOLD OUT)' if count == 0 else ''}\n"
-
+        if event_type != "default" and not is_event_active(event_type):
+            msg += f"  ❌ {label}: EVENT ENDED\n"
+        elif count == 0:
+            msg += f"  ❌ {label}: SOLD OUT ⚠️\n"
+        else:
+            all_sold_out = False
+            msg += f"  ☑️ {label}: {count} available\n"
+    
+    if all_sold_out and (event_type == "default" or is_event_active(event_type)):
+        msg += "\n⚠️ ALL ACCOUNTS ARE SOLD OUT! ⚠️\n"
+        msg += "🔥 Stay tuned for the next giveaway!\n"
+        msg += "👤 Contact @Maarkryan for premium accounts."
+    
+    msg += timer_msg
+    
+    if event_type != "default":
+        claims = get_event_claim_count(user_id, event_type)
+        msg += f"\n📋 Your claims this event:\n"
+        msg += f"  Normal: {claims['normal']}/{limits['normal_limit']}\n"
+        msg += f"  Unlock/Coin: {claims['unlock'] + claims['coin']}/{limits['unlock_coin_limit'] * 2}\n"
+        msg += f"  Total: {claims['total']}/{limits['normal_limit'] + limits['unlock_coin_limit'] * 2}\n"
+    
     msg += "\n👇 Select your account type:"
+    
     keyboard = []
     for label, callback, pool_key in [
-        ("🚘 CPM1 Normal", "claim_cpm1_normal", "cpm1_normal"),
-        ("🚘 CPM1 Unlock All Cars", "claim_cpm1_unlock", "cpm1_unlock"),
-        ("💰 CPM2 Normal", "claim_cpm2_normal", "cpm2_normal"),
-        ("💰 CPM2 Coin Account", "claim_cpm2_coin", "cpm2_coin"),
+        ("🚘 CPM1 Normal", "details_cpm1_normal", "cpm1_normal"),
+        ("🚘 CPM1 Unlock All Cars", "details_cpm1_unlock", "cpm1_unlock"),
+        ("💰 CPM2 Normal", "details_cpm2_normal", "cpm2_normal"),
+        ("💰 CPM2 Coin Account", "details_cpm2_coin", "cpm2_coin"),
     ]:
         count = len(ACCOUNT_POOLS.get(pool_key, []))
-        display = f"{label} {'❌⚠️' if count == 0 else '✅'}"
+        if count == 0:
+            display = f"{label} ❌⚠️ SOLD OUT"
+        elif event_type != "default" and not is_event_active(event_type):
+            display = f"{label} ⏳ EVENT ENDED"
+        else:
+            is_unlock = "unlock" in pool_key
+            is_coin = "coin" in pool_key
+            limits = get_event_limits(event_type)
+            claims = get_event_claim_count(user_id, event_type)
+            reached = False
+            if is_unlock or is_coin:
+                if (is_unlock and claims["unlock"] >= limits["unlock_coin_limit"]) or (is_coin and claims["coin"] >= limits["unlock_coin_limit"]):
+                    reached = True
+            else:
+                if claims["normal"] >= limits["normal_limit"]:
+                    reached = True
+            
+            if reached:
+                display = f"{label} ✅ LIMIT REACHED"
+            else:
+                display = f"{label} ☑️"
         keyboard.append([InlineKeyboardButton(display, callback_data=callback)])
-
+    
     keyboard.append([InlineKeyboardButton("ℹ️ More Info", callback_data="more_info")])
     await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -294,6 +624,36 @@ async def share_confirmed_handler(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Start", callback_data="start_back")]])
     )
 
+# ============================================================
+# ✅ DETAILS HANDLER
+# ============================================================
+async def details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        await query.answer()
+    except:
+        pass
+    data = query.data
+    
+    if data.startswith("details_"):
+        account_type = data.replace("details_", "")
+        
+        if account_type not in ACCOUNT_DETAILS:
+            await edit_custom(query, "❌ Invalid account type. Please try again.")
+            return
+        
+        details_msg = ACCOUNT_DETAILS[account_type]
+        
+        keyboard = [
+            [InlineKeyboardButton("🎯 CLAIM ACCOUNT", callback_data=f"claim_{account_type}")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_back")],
+        ]
+        
+        await edit_custom(query, details_msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+# ============================================================
+# ✅ CLAIM HANDLER
+# ============================================================
 async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -322,8 +682,10 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query,
                 f"❌ Still missing: {missing}\n\nPlease join ALL groups.",
                 reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")],
                     [InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")],
                     [InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")],
+                    [InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")],
                     [InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")],
                 ])
             )
@@ -343,16 +705,25 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "⚡ Owner: @Maarkryan 💙\n"
             "⚡ Powered by Mark Mwehehe\n\n"
+            "📌 Required Chats:\n"
+            "• 💙 TnnrCPM Channel (@TnnrCPM)\n"
+            "• 💙 TnnrChat Group (@TnnrChat)\n"
+            "• 💙 MarkMwehehe Store (@markmwehehestore)\n"
+            "• 💙 Mark Mwehehe Main Channel (@markmwhehe)\n\n"
             "📌 Account Types:\n"
             "• 🚘 CPM1 Normal\n"
             "• 🚘 CPM1 Unlock All Cars\n"
             "• 💰 CPM2 Normal\n"
             "• 💰 CPM2 Coin Account\n\n"
+            "📌 Events:\n"
+            "• Default: 1 per pool, 24h cooldown\n"
+            "• Claim Again: 3 total, 1 hour\n"
+            "• Party Time: 10 normal, 5 unlock/coin, 5 hours\n\n"
             "💎 Rules:\n"
-            "• 1 account per game per user\n"
             "• Must stay in all required groups\n"
             "• ⚠️ Leaving = warnings\n"
-            "• 5 warnings = PERMANENT BAN\n\n"
+            "• 5 warnings = PERMANENT BAN\n"
+            "• ⏳ Each event has its own timer\n\n"
             "🔥 Want more? Contact @Maarkryan."
         )
         await edit_custom(query, msg)
@@ -360,12 +731,22 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("claim_"):
         account_type = data.replace("claim_", "")
-
-        if has_claimed(user_id, account_type):
+        event_type = get_current_event()
+        limits = get_event_limits(event_type)
+        
+        if event_type != "default" and not is_event_active(event_type):
             await edit_custom(
                 query,
-                f"❌ ALREADY CLAIMED! ❌\n\nYou already claimed a {account_type.replace('_', ' ').upper()} account.\n🔥 One per user per game only!"
+                f"⏳ EVENT ENDED! ⏳\n\n"
+                f"The {EVENT_TYPES[event_type]['name']} event has ended.\n"
+                f"🔥 Please wait for the next event!\n\n"
+                f"💙 Click /start to check current status."
             )
+            return
+        
+        can_claim_event_result, msg = can_claim_event(user_id, event_type, account_type)
+        if not can_claim_event_result:
+            await edit_custom(query, f"❌ LIMIT REACHED! ❌\n\n{msg}\n\n💙 Click /start to check current status.")
             return
 
         load_accounts()
@@ -373,13 +754,17 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not pool:
             await edit_custom(
                 query,
-                f"😭 SORRY! 😭\n\nAll {account_type.replace('_', ' ').upper()} accounts have been claimed.\n🔥 Stay tuned for the next giveaway!\n\nContact @Maarkryan for premium accounts."
+                f"😭 SORRY! 😭\n\nAll {account_type.replace('_', ' ').upper()} accounts have been claimed.\n🔥 Stay tuned for the next giveaway!\n\n👤 Contact @Maarkryan for premium accounts."
             )
             return
 
         account = pool.pop(0)
         save_accounts()
         add_claimed(user_id, account_type, account["email"])
+        increment_event_claim(user_id, event_type, account_type)
+        
+        if event_type == "default":
+            set_last_claim_time(user_id)
         reset_warnings(user_id)
 
         msg = (
@@ -394,6 +779,21 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💎✅ WE OFFERING MY OWN CHANGE EMAIL&PASSWORD BOT BRO! ✅💎\n"
             f"💙🔄 @Mark_changer_bot 🚀\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        
+        if event_type != "default":
+            claims = get_event_claim_count(user_id, event_type)
+            msg += f"📋 Event: {EVENT_TYPES[event_type]['name']}\n"
+            msg += f"📊 Your claims: {claims['total']}/{limits['normal_limit'] + limits['unlock_coin_limit'] * 2}\n"
+            timer = get_event_timer(event_type)
+            if timer:
+                msg += f"⏳ Event time left: {timer['hours']}h {timer['minutes']}m\n"
+        else:
+            msg += f"⏳ COOLDOWN: 24 HOURS\n"
+            msg += f"📅 Next claim available: {(datetime.now() + timedelta(hours=COOLDOWN_HOURS)).strftime('%Y-%m-%d %H:%M')}\n"
+        
+        msg += (
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👑 Enjoy your account! 🔥\n"
             f"📌 Don't forget to stay in all groups!\n"
             f"👤 Host: @Maarkryan"
@@ -401,9 +801,12 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_custom(chat_id, msg, context)
 
         try:
+            claimed_label = account_type.replace('_', ' ').upper()
+            event_label = f" ({EVENT_TYPES[event_type]['name']})" if event_type != "default" else ""
             await edit_custom(
                 query,
-                f"✅ CLAIMED! You got a {account_type.replace('_', ' ').upper()} account! Check the message above."
+                f"✅ CLAIMED!{event_label}\nYou got a {claimed_label} account! Check the message above.\n\n"
+                f"📊 Event claims: {get_event_claim_count(user_id, event_type)['total']}/{limits['normal_limit'] + limits['unlock_coin_limit'] * 2}"
             )
         except:
             pass
@@ -427,6 +830,9 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+# ============================================================
+# ✅ ADMIN PANEL
+# ============================================================
 async def admin_panel(update=None, context=None, query=None):
     if query:
         user_id = query.from_user.id
@@ -435,16 +841,20 @@ async def admin_panel(update=None, context=None, query=None):
 
     if user_id != ADMIN_ID:
         if update:
-            await reply_custom(update, "⛔ Admin only.", context)
+            await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
         return
 
-    msg = "👑 ADMIN PANEL\n━━━━━━━━━━━━━━━━━━━━━\n\nSelect an action:"
+    msg = "👑 ADMIN PANEL 🥵\n━━━━━━━━━━━━━━━━━━━━━\n\nSelect an action:"
     keyboard = [
         [InlineKeyboardButton("📥 Add Accounts", callback_data="add_accounts_menu")],
         [InlineKeyboardButton("📊 Show Inventory", callback_data="show_inventory")],
+        [InlineKeyboardButton("📋 Show Claimed Accounts", callback_data="show_claimed")],
         [InlineKeyboardButton("👹 Show Makulit Users", callback_data="show_makulit")],
         [InlineKeyboardButton("🗑️ Clear Pool", callback_data="clear_pool")],
         [InlineKeyboardButton("🔓 Unban User", callback_data="unban_user")],
+        [InlineKeyboardButton("🎉 Start Claim Again", callback_data="start_claimagain")],
+        [InlineKeyboardButton("🎊 Start Party Time", callback_data="start_partytime")],
+        [InlineKeyboardButton("⏹️ End Event", callback_data="end_event")],
         [InlineKeyboardButton("🔙 Back to Main", callback_data="start_back")],
     ]
 
@@ -453,6 +863,9 @@ async def admin_panel(update=None, context=None, query=None):
     else:
         await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
 
+# ============================================================
+# ✅ BUTTON HANDLER
+# ============================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -480,7 +893,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ("💰 CPM2 Coin Account", "cpm2_coin"),
         ]:
             count = len(ACCOUNT_POOLS.get(pool_key, []))
-            display = f"{label} {'❌⚠️' if count == 0 else '✅'} ({count})"
+            display = f"{label} {'❌⚠️' if count == 0 else '☑️'} ({count})"
             keyboard.append([InlineKeyboardButton(display, callback_data=f"addaccount_{pool_key}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_back")])
         await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -488,16 +901,73 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "show_inventory":
         load_accounts()
-        msg = "📊 ACCOUNT INVENTORY\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+        msg = "📊 ACCOUNT INVENTORY 🥵\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+        has_accounts = False
+
         for pool_key, label in [
             ("cpm1_normal", "CPM1 Normal"),
             ("cpm1_unlock", "CPM1 Unlock All Cars"),
             ("cpm2_normal", "CPM2 Normal"),
             ("cpm2_coin", "CPM2 Coin Account"),
         ]:
-            count = len(ACCOUNT_POOLS.get(pool_key, []))
-            msg += f"{label}: {'❌ EMPTY' if count == 0 else f'✅ {count} accounts'}\n"
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_back")]]
+            accounts = ACCOUNT_POOLS.get(pool_key, [])
+            if accounts:
+                has_accounts = True
+                msg += f"📌 {label} ({len(accounts)} accounts):\n"
+                for i, acc in enumerate(accounts, 1):
+                    msg += f"  {i}. {acc['email']}:{acc['password']}\n"
+                msg += "\n"
+            else:
+                msg += f"❌ {label}: EMPTY\n\n"
+
+        if not has_accounts:
+            msg += "📭 No accounts available in any pool.\n"
+
+        msg += "\n━━━━━━━━━━━━━━━━━━━━━\nUse /addaccount to add more."
+        keyboard = [[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_back")]]
+        await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data == "show_claimed":
+        claimed_data = get_all_claimed()
+        if not claimed_data:
+            msg = "📋 CLAIMED ACCOUNTS\n━━━━━━━━━━━━━━━━━━━━━\n\n📭 No accounts have been claimed yet."
+            keyboard = [[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_back")]]
+            await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        msg = "📋 CLAIMED ACCOUNTS\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+        claimed_by_user = {}
+        for claim in claimed_data:
+            uid = claim["user_id"]
+            if uid not in claimed_by_user:
+                claimed_by_user[uid] = []
+            claimed_by_user[uid].append(claim)
+
+        for uid, claims in claimed_by_user.items():
+            try:
+                chat = await context.bot.get_chat(uid)
+                username = chat.username or "NoUsername"
+            except:
+                username = "Unknown"
+            msg += f"👤 @{username} (ID: {uid})\n"
+            for claim in claims:
+                account_type = claim.get("type", "unknown").replace('_', ' ').upper()
+                email = claim.get("email", "unknown")
+                timestamp = claim.get("timestamp", "")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp)
+                        timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        timestamp = timestamp[:16]
+                msg += f"  ✅ {account_type}: {email} ({timestamp})\n"
+            msg += "\n"
+
+        if len(msg) > 3500:
+            msg = msg[:3500] + "\n\n... (truncated)"
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_back")]]
         await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -510,7 +980,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for user in makulit:
                 msg += f"• User ID: {user['user_id']} – Warnings: {user['warnings']}/5\n"
             msg += "\n⚠️ These users keep leaving and rejoining groups."
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_back")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_back")]]
         await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -540,10 +1010,65 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_custom(query, "🔓 Send the USER ID to unban:\n\nExample: 6531314640")
         return
 
+    if data == "start_claimagain":
+        event_type = "claimagain"
+        limits = EVENT_TYPES[event_type]
+        set_event_timer(event_type, limits["timer_hours"])
+        success, failed = await broadcast_message(
+            context,
+            f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
+            f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
+            f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+            f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+            f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
+            f"💎 Click /start to claim now! 🚀\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💙 @Cpm_2test_bot",
+            "🎉 CLAIM AGAIN EVENT 🎉"
+        )
+        await edit_custom(query, f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour")
+        return
+
+    if data == "start_partytime":
+        event_type = "partytime"
+        limits = EVENT_TYPES[event_type]
+        set_event_timer(event_type, limits["timer_hours"])
+        success, failed = await broadcast_message(
+            context,
+            f"🎊 PARTY TIME EVENT STARTED! 🎊\n\n"
+            f"🔥 Massive giveaway time!\n"
+            f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+            f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+            f"⏳ Event lasts for {limits['timer_hours']} hours!\n\n"
+            f"💎 Click /start to claim now! 🚀\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💙 @Cpm_2test_bot",
+            "🎊 PARTY TIME EVENT 🎊"
+        )
+        await edit_custom(query, f"✅ Party Time event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hours")
+        return
+
+    if data == "end_event":
+        db_delete("giveaway/event_timer/claimagain")
+        db_delete("giveaway/event_timer/partytime")
+        success, failed = await broadcast_message(
+            context,
+            f"⏹️ EVENT ENDED ⏹️\n\n"
+            f"The current event has ended.\n"
+            f"🔥 Returning to default mode.\n\n"
+            f"💙 Click /start to check current status.",
+            "⏹️ EVENT ENDED"
+        )
+        await edit_custom(query, f"✅ Event ended! 🥵\n📤 Broadcast sent to {success} users.")
+        return
+
     if data == "admin_back":
         await admin_panel(update, context, query)
         return
 
+# ============================================================
+# ✅ MESSAGE HANDLER
+# ============================================================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -553,7 +1078,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
 
     if user_id != ADMIN_ID:
-        await reply_custom(update, "⛔ Admin only.", context)
+        await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
         return
 
     if context.user_data.get('awaiting_unban'):
@@ -599,11 +1124,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ADD_ACCOUNT_SESSIONS.pop(user_id, None)
         await reply_custom(
             update,
-            f"✅ Added {added} accounts to {pool_key.replace('_', ' ').upper()}!\n📊 Total: {len(ACCOUNT_POOLS.get(pool_key, []))} accounts",
+            f"✅ Added {added} accounts to {pool_key.replace('_', ' ').upper()}! 🥵\n📊 Total: {len(ACCOUNT_POOLS.get(pool_key, []))} accounts",
             context
         )
         return
 
+# ============================================================
+# ✅ LEFT_CHAT_MEMBER HANDLER
+# ============================================================
 async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.left_chat_member:
         return
@@ -632,10 +1160,70 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
                         "💙 Please rejoin."
                     )
                 )
-            except:
+            except Exception as e:
+                if "blocked" in str(e).lower():
+                    print(f"⚠️ User {user.id} blocked the bot - skipping warning")
+                else:
+                    print(f"⚠️ Error sending warning to {user.id}: {e}")
                 pass
             break
 
+# ============================================================
+# ✅ ADMIN COMMANDS
+# ============================================================
+async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
+        return
+
+    event_type = "claimagain"
+    limits = EVENT_TYPES[event_type]
+    set_event_timer(event_type, limits["timer_hours"])
+    success, failed = await broadcast_message(
+        context,
+        f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
+        f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
+        f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+        f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+        f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
+        f"💎 Click /start to claim now! 🚀\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💙 @Cpm_2test_bot",
+        "🎉 CLAIM AGAIN EVENT 🎉"
+    )
+    await reply_custom(
+        update,
+        f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour",
+        context
+    )
+
+async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
+        return
+
+    success, failed = await broadcast_message(
+        context,
+        f"🛠️ UNDER MAINTENANCE ⚡5\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⚠️ The bot is currently under maintenance. ⚡5\n\n"
+        f"🔥 We are adding new accounts and improving the system!\n"
+        f"⏳ Please wait a few minutes and try again.\n\n"
+        f"💎 We apologize for the inconvenience.\n"
+        f"👑 Stay tuned for more updates!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💙 @Cpm_2test_bot",
+        "🛠️ MAINTENANCE ⚡5"
+    )
+    await reply_custom(
+        update,
+        f"✅ Maintenance broadcast sent! 🥵\n📤 Success: {success}\n❌ Failed: {failed}",
+        context
+    )
+
+# ============================================================
+# ✅ RUN BOT
+# ============================================================
 def run_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -656,9 +1244,12 @@ def run_bot():
     app.add_handler(CommandHandler("showthemakulit", lambda u, c: admin_panel(u, c)))
     app.add_handler(CommandHandler("clearpool", lambda u, c: admin_panel(u, c)))
     app.add_handler(CommandHandler("unban", lambda u, c: admin_panel(u, c)))
+    app.add_handler(CommandHandler("claimagain", claimagain_command))
+    app.add_handler(CommandHandler("undermaintinance", undermaintinance_command))
 
+    app.add_handler(CallbackQueryHandler(details_handler, pattern="^details_"))
     app.add_handler(CallbackQueryHandler(claim_handler, pattern="^(claim_|addaccount_|check_verification|more_info|start_back|admin_back|share_confirmed)"))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_makulit|clear_pool|clearpool_|unban_user|admin_back)"))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|admin_back)"))
 
     app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, message_handler))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -667,10 +1258,13 @@ def run_bot():
     print("🎁 GIVEAWAY BOT WITH VERIFICATION")
     print("📌 Bot: @Cpm_2test_bot")
     print("📌 Admin: /addaccount - opens admin panel")
+    print("📌 Admin: /claimagain - start Claim Again event")
+    print("📌 Admin: /undermaintinance - broadcast maintenance")
     print("📌 Verification: Share to 3-5 groups + join required chats")
-    print("📌 Warnings: 5 = ban")
-    print("📌 OPTIMIZED: Faster responses with 20 connection pool")
-    print("📌 FIXED: LEFT_CHAT_MEMBER filter (no errors)")
+    print("📌 Account details preview before claiming")
+    print("📌 24-hour cooldown, Event system, Full inventory")
+    print("📌 ALL ADMIN COMMANDS ARE ADMIN-ONLY")
+    print("📌 🥵 emoji = admin-only visibility")
     print("=" * 50)
 
     loop.run_until_complete(app.initialize())
