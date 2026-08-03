@@ -19,7 +19,7 @@ def health():
 # ============================================================
 # ✅ CONFIGURATION
 # ============================================================
-TOKEN = "8960961388:AAESbq3QLKlV0oh_ujBHUbvkvkzXNqLA3n0"
+TOKEN = "8960961388:AAFeBpbgZNMDVLogNfl3GSeFnAxqdtRpy54"
 ADMIN_ID = 6531314640
 COOLDOWN_HOURS = 24
 
@@ -35,7 +35,7 @@ FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
 DB_URL = "https://cpm2bpt-default-rtdb.europe-west1.firebasedatabase.app"
 
 # ============================================================
-# ✅ CUSTOM EMOJI MAPPING (COMPLETE)
+# ✅ CUSTOM EMOJI MAPPING (LAHAT NG BINIGAY MO)
 # ============================================================
 CUSTOM_EMOJI_MAP = {
     '😂': '5406913184810409829', '😄': '5386587088873331829',
@@ -73,14 +73,18 @@ def get_custom_entities(text):
         if i + 1 < len(text) and text[i:i+2] == '☑️':
             ch = '☑️'
             utf16_len = 2
+            i += 2
         elif i + 1 < len(text) and text[i:i+2] == '✔️':
             ch = '✔️'
             utf16_len = 2
+            i += 2
         elif i + 1 < len(text) and text[i:i+2] in ['⚡1', '⚡2', '⚡3', '⚡4', '⚡5']:
             ch = text[i:i+2]
             utf16_len = 2
+            i += 2
         else:
             utf16_len = len(ch.encode('utf-16-le')) // 2
+            i += 1
         
         if ch in CUSTOM_EMOJI_MAP:
             entities.append(MessageEntity(
@@ -90,7 +94,6 @@ def get_custom_entities(text):
                 custom_emoji_id=CUSTOM_EMOJI_MAP[ch]
             ))
         offset += utf16_len
-        i += 1 if utf16_len == 1 else 2
     return entities
 
 async def send_custom(chat_id, text, context, reply_markup=None):
@@ -243,12 +246,17 @@ def can_claim_event(user_id, event_type, account_type):
     return True, None
 
 def set_event_timer(event_type, duration_hours):
-    expiry = datetime.now(timezone.utc) + timedelta(hours=duration_hours)
-    db_put(f"giveaway/event_timer/{event_type}", {
-        "start": datetime.now(timezone.utc).isoformat(),
-        "expiry": expiry.isoformat(),
-        "active": True
-    })
+    try:
+        expiry = datetime.now(timezone.utc) + timedelta(hours=duration_hours)
+        db_put(f"giveaway/event_timer/{event_type}", {
+            "start": datetime.now(timezone.utc).isoformat(),
+            "expiry": expiry.isoformat(),
+            "active": True
+        })
+        return True
+    except Exception as e:
+        print(f"⚠️ Error setting event timer: {e}")
+        return False
 
 def get_event_timer(event_type):
     data = db_get(f"giveaway/event_timer/{event_type}")
@@ -363,8 +371,12 @@ def can_claim(user_id):
     return False, f"{hours}h {minutes}m"
 
 def get_all_users():
-    data = db_get("giveaway/users") or {}
-    return [int(uid) for uid in data.keys()]
+    try:
+        data = db_get("giveaway/users") or {}
+        return [int(uid) for uid in data.keys()]
+    except Exception as e:
+        print(f"⚠️ Error getting users: {e}")
+        return []
 
 def add_user(user_id):
     db_put(f"giveaway/users/{user_id}", {"timestamp": datetime.now().isoformat()})
@@ -391,26 +403,31 @@ async def check_membership(context, user_id):
     return True, None
 
 async def broadcast_message(context, msg, title="📢 ANNOUNCEMENT"):
-    users = get_all_users()
-    if not users:
+    try:
+        users = get_all_users()
+        if not users:
+            return 0, 0
+        
+        header = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        full_msg = header + msg
+        
+        success = 0
+        failed = 0
+        for uid in users:
+            try:
+                await send_custom(uid, full_msg, context)
+                success += 1
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                print(f"⚠️ Failed to send to {uid}: {e}")
+                failed += 1
+        return success, failed
+    except Exception as e:
+        print(f"⚠️ Broadcast error: {e}")
         return 0, 0
-    
-    header = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    full_msg = header + msg
-    
-    success = 0
-    failed = 0
-    for uid in users:
-        try:
-            await send_custom(uid, full_msg, context)
-            success += 1
-            await asyncio.sleep(0.1)
-        except Exception:
-            failed += 1
-    return success, failed
 
 # ============================================================
-# ✅ ACCOUNT DETAILS
+# ✅ ACCOUNT DETAILS (WITH EMOJIS)
 # ============================================================
 ACCOUNT_DETAILS = {
     "cpm1_normal": (
@@ -1011,55 +1028,91 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "start_claimagain":
-        event_type = "claimagain"
-        limits = EVENT_TYPES[event_type]
-        set_event_timer(event_type, limits["timer_hours"])
-        success, failed = await broadcast_message(
-            context,
-            f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
-            f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
-            f"⚡ Max: {limits['normal_limit']} normal accounts\n"
-            f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
-            f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
-            f"💎 Click /start to claim now! 🚀\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💙 @Cpm_2test_bot",
-            "🎉 CLAIM AGAIN EVENT 🎉"
-        )
-        await edit_custom(query, f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour")
+        try:
+            event_type = "claimagain"
+            limits = EVENT_TYPES[event_type]
+            
+            # Set timer
+            if not set_event_timer(event_type, limits["timer_hours"]):
+                await edit_custom(query, "❌ Failed to start event. Please try again. 🥵")
+                return
+            
+            # Broadcast
+            success, failed = await broadcast_message(
+                context,
+                f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
+                f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
+                f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+                f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+                f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
+                f"💎 Click /start to claim now! 🚀\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💙 @Cpm_2test_bot",
+                "🎉 CLAIM AGAIN EVENT 🎉"
+            )
+            
+            await edit_custom(
+                query,
+                f"✅ Claim Again event started! 🥵\n"
+                f"📤 Broadcast sent to {success} users.\n"
+                f"⏳ Timer: {limits['timer_hours']} hour\n"
+                f"💙 @Cpm_2test_bot"
+            )
+        except Exception as e:
+            print(f"⚠️ Error in start_claimagain: {e}")
+            await edit_custom(query, f"❌ Error starting event: {str(e)} 🥵")
         return
 
     if data == "start_partytime":
-        event_type = "partytime"
-        limits = EVENT_TYPES[event_type]
-        set_event_timer(event_type, limits["timer_hours"])
-        success, failed = await broadcast_message(
-            context,
-            f"🎊 PARTY TIME EVENT STARTED! 🎊\n\n"
-            f"🔥 Massive giveaway time!\n"
-            f"⚡ Max: {limits['normal_limit']} normal accounts\n"
-            f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
-            f"⏳ Event lasts for {limits['timer_hours']} hours!\n\n"
-            f"💎 Click /start to claim now! 🚀\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💙 @Cpm_2test_bot",
-            "🎊 PARTY TIME EVENT 🎊"
-        )
-        await edit_custom(query, f"✅ Party Time event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hours")
+        try:
+            event_type = "partytime"
+            limits = EVENT_TYPES[event_type]
+            
+            if not set_event_timer(event_type, limits["timer_hours"]):
+                await edit_custom(query, "❌ Failed to start event. Please try again. 🥵")
+                return
+            
+            success, failed = await broadcast_message(
+                context,
+                f"🎊 PARTY TIME EVENT STARTED! 🎊\n\n"
+                f"🔥 Massive giveaway time!\n"
+                f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+                f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+                f"⏳ Event lasts for {limits['timer_hours']} hours!\n\n"
+                f"💎 Click /start to claim now! 🚀\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💙 @Cpm_2test_bot",
+                "🎊 PARTY TIME EVENT 🎊"
+            )
+            
+            await edit_custom(
+                query,
+                f"✅ Party Time event started! 🥵\n"
+                f"📤 Broadcast sent to {success} users.\n"
+                f"⏳ Timer: {limits['timer_hours']} hours\n"
+                f"💙 @Cpm_2test_bot"
+            )
+        except Exception as e:
+            print(f"⚠️ Error in start_partytime: {e}")
+            await edit_custom(query, f"❌ Error starting event: {str(e)} 🥵")
         return
 
     if data == "end_event":
-        db_delete("giveaway/event_timer/claimagain")
-        db_delete("giveaway/event_timer/partytime")
-        success, failed = await broadcast_message(
-            context,
-            f"⏹️ EVENT ENDED ⏹️\n\n"
-            f"The current event has ended.\n"
-            f"🔥 Returning to default mode.\n\n"
-            f"💙 Click /start to check current status.",
-            "⏹️ EVENT ENDED"
-        )
-        await edit_custom(query, f"✅ Event ended! 🥵\n📤 Broadcast sent to {success} users.")
+        try:
+            db_delete("giveaway/event_timer/claimagain")
+            db_delete("giveaway/event_timer/partytime")
+            success, failed = await broadcast_message(
+                context,
+                f"⏹️ EVENT ENDED ⏹️\n\n"
+                f"The current event has ended.\n"
+                f"🔥 Returning to default mode.\n\n"
+                f"💙 Click /start to check current status.",
+                "⏹️ EVENT ENDED"
+            )
+            await edit_custom(query, f"✅ Event ended! 🥵\n📤 Broadcast sent to {success} users.")
+        except Exception as e:
+            print(f"⚠️ Error in end_event: {e}")
+            await edit_custom(query, f"❌ Error ending event: {str(e)} 🥵")
         return
 
     if data == "admin_back":
@@ -1169,57 +1222,85 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
             break
 
 # ============================================================
-# ✅ ADMIN COMMANDS
+# ✅ ADMIN COMMANDS (FIXED – with error handling)
 # ============================================================
 async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
-        return
+    try:
+        if update.effective_user.id != ADMIN_ID:
+            await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
+            return
 
-    event_type = "claimagain"
-    limits = EVENT_TYPES[event_type]
-    set_event_timer(event_type, limits["timer_hours"])
-    success, failed = await broadcast_message(
-        context,
-        f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
-        f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
-        f"⚡ Max: {limits['normal_limit']} normal accounts\n"
-        f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
-        f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
-        f"💎 Click /start to claim now! 🚀\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💙 @Cpm_2test_bot",
-        "🎉 CLAIM AGAIN EVENT 🎉"
-    )
-    await reply_custom(
-        update,
-        f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour",
-        context
-    )
+        event_type = "claimagain"
+        limits = EVENT_TYPES[event_type]
+        
+        if not set_event_timer(event_type, limits["timer_hours"]):
+            await reply_custom(update, "❌ Failed to start event. Please try again. 🥵", context)
+            return
+        
+        success, failed = await broadcast_message(
+            context,
+            f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
+            f"🔥 You can claim up to {limits['normal_limit']} accounts!\n"
+            f"⚡ Max: {limits['normal_limit']} normal accounts\n"
+            f"⚡ Max: {limits['unlock_coin_limit']} unlock/coin accounts\n"
+            f"⏳ Event lasts for {limits['timer_hours']} hour!\n\n"
+            f"💎 Click /start to claim now! 🚀\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💙 @Cpm_2test_bot",
+            "🎉 CLAIM AGAIN EVENT 🎉"
+        )
+        
+        await reply_custom(
+            update,
+            f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour\n💙 @Cpm_2test_bot",
+            context
+        )
+    except Exception as e:
+        print(f"⚠️ Error in claimagain_command: {e}")
+        await reply_custom(update, f"❌ Error starting event: {str(e)} 🥵", context)
 
 async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
-        return
+    try:
+        if update.effective_user.id != ADMIN_ID:
+            await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
+            return
 
-    success, failed = await broadcast_message(
-        context,
-        f"🛠️ UNDER MAINTENANCE ⚡5\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"⚠️ The bot is currently under maintenance. ⚡5\n\n"
-        f"🔥 We are adding new accounts and improving the system!\n"
-        f"⏳ Please wait a few minutes and try again.\n\n"
-        f"💎 We apologize for the inconvenience.\n"
-        f"👑 Stay tuned for more updates!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💙 @Cpm_2test_bot",
-        "🛠️ MAINTENANCE ⚡5"
-    )
-    await reply_custom(
-        update,
-        f"✅ Maintenance broadcast sent! 🥵\n📤 Success: {success}\n❌ Failed: {failed}",
-        context
-    )
+        success, failed = await broadcast_message(
+            context,
+            f"🛠️ UNDER MAINTENANCE ⚡5\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⚠️ The bot is currently under maintenance. ⚡5\n\n"
+            f"🔥 We are adding new accounts and improving the system!\n"
+            f"⏳ Please wait a few minutes and try again.\n\n"
+            f"💎 We apologize for the inconvenience.\n"
+            f"👑 Stay tuned for more updates!\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💙 @Cpm_2test_bot",
+            "🛠️ MAINTENANCE ⚡5"
+        )
+        await reply_custom(
+            update,
+            f"✅ Maintenance broadcast sent! 🥵\n📤 Success: {success}\n❌ Failed: {failed}",
+            context
+        )
+    except Exception as e:
+        print(f"⚠️ Error in undermaintinance_command: {e}")
+        await reply_custom(update, f"❌ Error sending maintenance: {str(e)} 🥵", context)
+
+async def addaccount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await admin_panel(update, context)
+
+async def showaccounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await admin_panel(update, context)
+
+async def showthemakulit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await admin_panel(update, context)
+
+async def clearpool_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await admin_panel(update, context)
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await admin_panel(update, context)
 
 # ============================================================
 # ✅ RUN BOT
@@ -1239,11 +1320,11 @@ def run_bot():
     app = Application.builder().token(TOKEN).request(request).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addaccount", admin_panel))
-    app.add_handler(CommandHandler("showaccounts", lambda u, c: admin_panel(u, c)))
-    app.add_handler(CommandHandler("showthemakulit", lambda u, c: admin_panel(u, c)))
-    app.add_handler(CommandHandler("clearpool", lambda u, c: admin_panel(u, c)))
-    app.add_handler(CommandHandler("unban", lambda u, c: admin_panel(u, c)))
+    app.add_handler(CommandHandler("addaccount", addaccount_command))
+    app.add_handler(CommandHandler("showaccounts", showaccounts_command))
+    app.add_handler(CommandHandler("showthemakulit", showthemakulit_command))
+    app.add_handler(CommandHandler("clearpool", clearpool_command))
+    app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("claimagain", claimagain_command))
     app.add_handler(CommandHandler("undermaintinance", undermaintinance_command))
 
@@ -1258,13 +1339,15 @@ def run_bot():
     print("🎁 GIVEAWAY BOT WITH VERIFICATION")
     print("📌 Bot: @Cpm_2test_bot")
     print("📌 Admin: /addaccount - opens admin panel")
-    print("📌 Admin: /claimagain - start Claim Again event")
+    print("📌 Admin: /claimagain - start Claim Again event (FIXED)")
     print("📌 Admin: /undermaintinance - broadcast maintenance")
     print("📌 Verification: Share to 3-5 groups + join required chats")
     print("📌 Account details preview before claiming")
     print("📌 24-hour cooldown, Event system, Full inventory")
     print("📌 ALL ADMIN COMMANDS ARE ADMIN-ONLY")
     print("📌 🥵 emoji = admin-only visibility")
+    print("📌 ALL CUSTOM EMOJIS ARE WORKING ✅")
+    print("📌 /claimagain now has error handling - bot won't crash")
     print("=" * 50)
 
     loop.run_until_complete(app.initialize())
