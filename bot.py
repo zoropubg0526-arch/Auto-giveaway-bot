@@ -19,7 +19,7 @@ def health():
 # ============================================================
 # ✅ CONFIGURATION
 # ============================================================
-TOKEN = "8960961388:AAFeBpbgZNMDVLogNfl3GSeFnAxqdtRpy54"
+TOKEN = "8960961388:AAESbq3QLKlV0oh_ujBHUbvkvkzXNqLA3n0"
 ADMIN_ID = 6531314640
 COOLDOWN_HOURS = 24
 
