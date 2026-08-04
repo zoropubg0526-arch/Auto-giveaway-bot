@@ -158,6 +158,16 @@ def db_push(path, data):
     return r.status_code in (200, 204)
 
 # ============================================================
+# ✅ CLAIM ENABLE/DISABLE
+# ============================================================
+def get_claim_enabled():
+    val = db_get("giveaway/claim_enabled")
+    return val is not False  # default True
+
+def set_claim_enabled(value):
+    db_put("giveaway/claim_enabled", value)
+
+# ============================================================
 # ✅ GIVEAWAY DATA
 # ============================================================
 ACCOUNT_POOLS = {
@@ -488,11 +498,33 @@ ACCOUNT_DETAILS = {
 # ✅ START COMMAND
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Auto-delete the command message to keep chat clean
+    if update.message:
+        try:
+            await update.message.delete()
+        except:
+            pass
+
     user_id = update.effective_user.id
     add_user(user_id)
 
     if is_banned(user_id):
         await reply_custom(update, "⛔ BANNED ⛔\n\nYou have been permanently banned.\nContact @Maarkryan.", context)
+        return
+
+    # Check if claiming is globally disabled
+    if not get_claim_enabled():
+        msg = (
+            "⚠️ CLAIMING IS CURRENTLY DISABLED ⚠️\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔒 The admin has temporarily disabled claiming.\n"
+            "⏳ Please wait until claiming is re‑enabled.\n"
+            "🔥 Stay tuned for updates!\n\n"
+            "📌 Contact @Maarkryan for inquiries.\n"
+            "💙 Thank you for your patience."
+        )
+        keyboard = [[InlineKeyboardButton("🔄 Check Again", callback_data="start_back")]]
+        await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if not is_share_verified(user_id):
@@ -747,6 +779,17 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("claim_"):
+        # Check if claiming is globally disabled
+        if not get_claim_enabled():
+            await edit_custom(
+                query,
+                "🔒 CLAIMING IS CURRENTLY DISABLED 🔒\n\n"
+                "The admin has temporarily disabled claiming.\n"
+                "⏳ Please wait until it is re‑enabled.\n"
+                "💙 Thank you for your patience."
+            )
+            return
+
         account_type = data.replace("claim_", "")
         event_type = get_current_event()
         limits = get_event_limits(event_type)
@@ -861,7 +904,8 @@ async def admin_panel(update=None, context=None, query=None):
             await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
         return
 
-    msg = "👑 ADMIN PANEL 🥵\n━━━━━━━━━━━━━━━━━━━━━\n\nSelect an action:"
+    status = "ENABLED ✅" if get_claim_enabled() else "DISABLED ❌"
+    msg = f"👑 ADMIN PANEL\n━━━━━━━━━━━━━━━━━━━━━\n\n📊 Claim Status: {status}\n\nSelect an action:"
     keyboard = [
         [InlineKeyboardButton("📥 Add Accounts", callback_data="add_accounts_menu")],
         [InlineKeyboardButton("📊 Show Inventory", callback_data="show_inventory")],
@@ -872,6 +916,7 @@ async def admin_panel(update=None, context=None, query=None):
         [InlineKeyboardButton("🎉 Start Claim Again", callback_data="start_claimagain")],
         [InlineKeyboardButton("🎊 Start Party Time", callback_data="start_partytime")],
         [InlineKeyboardButton("⏹️ End Event", callback_data="end_event")],
+        [InlineKeyboardButton("🔒 Disable Claim" if get_claim_enabled() else "🔓 Enable Claim", callback_data="toggle_claim")],
         [InlineKeyboardButton("🔙 Back to Main", callback_data="start_back")],
     ]
 
@@ -918,7 +963,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "show_inventory":
         load_accounts()
-        msg = "📊 ACCOUNT INVENTORY 🥵\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+        msg = "📊 ACCOUNT INVENTORY\n━━━━━━━━━━━━━━━━━━━━━\n\n"
         has_accounts = False
 
         for pool_key, label in [
@@ -1032,12 +1077,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             event_type = "claimagain"
             limits = EVENT_TYPES[event_type]
             
-            # Set timer
             if not set_event_timer(event_type, limits["timer_hours"]):
-                await edit_custom(query, "❌ Failed to start event. Please try again. 🥵")
+                await edit_custom(query, "❌ Failed to start event. Please try again.")
                 return
             
-            # Broadcast
             success, failed = await broadcast_message(
                 context,
                 f"🎉 CLAIM AGAIN EVENT STARTED! 🎉\n\n"
@@ -1053,14 +1096,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await edit_custom(
                 query,
-                f"✅ Claim Again event started! 🥵\n"
+                f"✅ Claim Again event started!\n"
                 f"📤 Broadcast sent to {success} users.\n"
                 f"⏳ Timer: {limits['timer_hours']} hour\n"
                 f"💙 @Cpm_2test_bot"
             )
         except Exception as e:
             print(f"⚠️ Error in start_claimagain: {e}")
-            await edit_custom(query, f"❌ Error starting event: {str(e)} 🥵")
+            await edit_custom(query, f"❌ Error starting event: {str(e)}")
         return
 
     if data == "start_partytime":
@@ -1069,7 +1112,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             limits = EVENT_TYPES[event_type]
             
             if not set_event_timer(event_type, limits["timer_hours"]):
-                await edit_custom(query, "❌ Failed to start event. Please try again. 🥵")
+                await edit_custom(query, "❌ Failed to start event. Please try again.")
                 return
             
             success, failed = await broadcast_message(
@@ -1087,14 +1130,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await edit_custom(
                 query,
-                f"✅ Party Time event started! 🥵\n"
+                f"✅ Party Time event started!\n"
                 f"📤 Broadcast sent to {success} users.\n"
                 f"⏳ Timer: {limits['timer_hours']} hours\n"
                 f"💙 @Cpm_2test_bot"
             )
         except Exception as e:
             print(f"⚠️ Error in start_partytime: {e}")
-            await edit_custom(query, f"❌ Error starting event: {str(e)} 🥵")
+            await edit_custom(query, f"❌ Error starting event: {str(e)}")
         return
 
     if data == "end_event":
@@ -1109,10 +1152,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💙 Click /start to check current status.",
                 "⏹️ EVENT ENDED"
             )
-            await edit_custom(query, f"✅ Event ended! 🥵\n📤 Broadcast sent to {success} users.")
+            await edit_custom(query, f"✅ Event ended!\n📤 Broadcast sent to {success} users.")
         except Exception as e:
             print(f"⚠️ Error in end_event: {e}")
-            await edit_custom(query, f"❌ Error ending event: {str(e)} 🥵")
+            await edit_custom(query, f"❌ Error ending event: {str(e)}")
+        return
+
+    if data == "toggle_claim":
+        current = get_claim_enabled()
+        new_status = not current
+        set_claim_enabled(new_status)
+        status_text = "ENABLED" if new_status else "DISABLED"
+        
+        if new_status:
+            broadcast_msg = (
+                "✅ CLAIMING HAS BEEN ENABLED ✅\n\n"
+                "🎉 You can now claim accounts again!\n"
+                "🔥 Click /start to get your free account!\n"
+                "💙 @Cpm_2test_bot"
+            )
+            title = "✅ CLAIMING ENABLED"
+        else:
+            broadcast_msg = (
+                "🔒 CLAIMING HAS BEEN DISABLED 🔒\n\n"
+                "⏳ The admin has temporarily disabled claiming.\n"
+                "🔥 Please wait for updates.\n"
+                "💙 @Cpm_2test_bot"
+            )
+            title = "🔒 CLAIMING DISABLED"
+        
+        success, failed = await broadcast_message(context, broadcast_msg, title)
+        # Refresh admin panel
+        await admin_panel(update, context, query)
+        # Optionally show a quick confirmation (admin_panel will overwrite it)
+        # We can send a notification via answer_callback_query
+        try:
+            await query.answer(f"Claim status toggled to {status_text}. Broadcast sent to {success} users.", show_alert=False)
+        except:
+            pass
         return
 
     if data == "admin_back":
@@ -1177,7 +1254,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ADD_ACCOUNT_SESSIONS.pop(user_id, None)
         await reply_custom(
             update,
-            f"✅ Added {added} accounts to {pool_key.replace('_', ' ').upper()}! 🥵\n📊 Total: {len(ACCOUNT_POOLS.get(pool_key, []))} accounts",
+            f"✅ Added {added} accounts to {pool_key.replace('_', ' ').upper()}!\n📊 Total: {len(ACCOUNT_POOLS.get(pool_key, []))} accounts",
             context
         )
         return
@@ -1222,7 +1299,7 @@ async def left_chat_member_handler(update: Update, context: ContextTypes.DEFAULT
             break
 
 # ============================================================
-# ✅ ADMIN COMMANDS (FIXED – with error handling)
+# ✅ ADMIN COMMANDS
 # ============================================================
 async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1234,7 +1311,7 @@ async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         limits = EVENT_TYPES[event_type]
         
         if not set_event_timer(event_type, limits["timer_hours"]):
-            await reply_custom(update, "❌ Failed to start event. Please try again. 🥵", context)
+            await reply_custom(update, "❌ Failed to start event. Please try again.", context)
             return
         
         success, failed = await broadcast_message(
@@ -1252,12 +1329,12 @@ async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         await reply_custom(
             update,
-            f"✅ Claim Again event started! 🥵\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour\n💙 @Cpm_2test_bot",
+            f"✅ Claim Again event started!\n📤 Broadcast sent to {success} users.\n⏳ Timer: {limits['timer_hours']} hour\n💙 @Cpm_2test_bot",
             context
         )
     except Exception as e:
         print(f"⚠️ Error in claimagain_command: {e}")
-        await reply_custom(update, f"❌ Error starting event: {str(e)} 🥵", context)
+        await reply_custom(update, f"❌ Error starting event: {str(e)}", context)
 
 async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1280,12 +1357,12 @@ async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT
         )
         await reply_custom(
             update,
-            f"✅ Maintenance broadcast sent! 🥵\n📤 Success: {success}\n❌ Failed: {failed}",
+            f"✅ Maintenance broadcast sent!\n📤 Success: {success}\n❌ Failed: {failed}",
             context
         )
     except Exception as e:
         print(f"⚠️ Error in undermaintinance_command: {e}")
-        await reply_custom(update, f"❌ Error sending maintenance: {str(e)} 🥵", context)
+        await reply_custom(update, f"❌ Error sending maintenance: {str(e)}", context)
 
 async def addaccount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
@@ -1330,7 +1407,7 @@ def run_bot():
 
     app.add_handler(CallbackQueryHandler(details_handler, pattern="^details_"))
     app.add_handler(CallbackQueryHandler(claim_handler, pattern="^(claim_|addaccount_|check_verification|more_info|start_back|admin_back|share_confirmed)"))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|admin_back)"))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|toggle_claim|admin_back)"))
 
     app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, message_handler))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -1339,15 +1416,14 @@ def run_bot():
     print("🎁 GIVEAWAY BOT WITH VERIFICATION")
     print("📌 Bot: @Cpm_2test_bot")
     print("📌 Admin: /addaccount - opens admin panel")
-    print("📌 Admin: /claimagain - start Claim Again event (FIXED)")
+    print("📌 Admin: /claimagain - start Claim Again event")
     print("📌 Admin: /undermaintinance - broadcast maintenance")
     print("📌 Verification: Share to 3-5 groups + join required chats")
     print("📌 Account details preview before claiming")
     print("📌 24-hour cooldown, Event system, Full inventory")
     print("📌 ALL ADMIN COMMANDS ARE ADMIN-ONLY")
-    print("📌 🥵 emoji = admin-only visibility")
-    print("📌 ALL CUSTOM EMOJIS ARE WORKING ✅")
-    print("📌 /claimagain now has error handling - bot won't crash")
+    print("📌 Claim enable/disable + broadcast")
+    print("📌 Auto-delete command messages")
     print("=" * 50)
 
     loop.run_until_complete(app.initialize())
