@@ -1,4 +1,4 @@
-import json, time, re, os, random as rnd, asyncio, aiohttp, logging, threading
+import json, time, re, os, random as rnd, asyncio, logging, threading
 from datetime import datetime, timedelta, timezone
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
@@ -35,7 +35,7 @@ FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
 DB_URL = "https://cpm2bpt-default-rtdb.europe-west1.firebasedatabase.app"
 
 # ============================================================
-# ✅ CUSTOM EMOJI MAPPING (LAHAT NG BINIGAY MO)
+# ✅ CUSTOM EMOJI MAPPING
 # ============================================================
 CUSTOM_EMOJI_MAP = {
     '😂': '5406913184810409829', '😄': '5386587088873331829',
@@ -61,7 +61,7 @@ CUSTOM_EMOJI_MAP = {
     '⚡1': '6100277122935295595', '⚡2': '6100472578307002133',
     '⚡3': '6102404476071579522', '⚡4': '6100671388048166850',
     '⚡5': '6100278127957643014',
-    '🥵': '6307832826263768178',  # ADMIN-ONLY
+    '🥵': '6307832826263768178',
 }
 
 def get_custom_entities(text):
@@ -70,12 +70,8 @@ def get_custom_entities(text):
     i = 0
     while i < len(text):
         ch = text[i]
-        if i + 1 < len(text) and text[i:i+2] == '☑️':
-            ch = '☑️'
-            utf16_len = 2
-            i += 2
-        elif i + 1 < len(text) and text[i:i+2] == '✔️':
-            ch = '✔️'
+        if i + 1 < len(text) and text[i:i+2] in ['☑️', '✔️']:
+            ch = text[i:i+2]
             utf16_len = 2
             i += 2
         elif i + 1 < len(text) and text[i:i+2] in ['⚡1', '⚡2', '⚡3', '⚡4', '⚡5']:
@@ -107,7 +103,7 @@ async def send_custom(chat_id, text, context, reply_markup=None):
             entities=entities if entities else None
         )
     except Exception as e:
-        print(f"⚠️ Custom emoji error: {e}. Sending without entities.")
+        print(f"⚠️ Custom emoji error: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
             text=text,
@@ -128,9 +124,7 @@ async def edit_custom(query, text, reply_markup=None):
             entities=entities if entities else None
         )
     except Exception as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
+        if "Message is not modified" not in str(e):
             try:
                 await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=None)
             except:
@@ -152,17 +146,12 @@ def db_delete(path):
     url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
     return requests.delete(url).status_code in (200, 204)
 
-def db_push(path, data):
-    url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
-    r = requests.post(url, json=data)
-    return r.status_code in (200, 204)
-
 # ============================================================
 # ✅ CLAIM ENABLE/DISABLE
 # ============================================================
 def get_claim_enabled():
     val = db_get("giveaway/claim_enabled")
-    return val is not False  # default True
+    return val is not False
 
 def set_claim_enabled(value):
     db_put("giveaway/claim_enabled", value)
@@ -311,10 +300,6 @@ def add_claimed(user_id, account_type, email):
     claimed.append({"type": account_type, "email": email, "timestamp": datetime.now().isoformat()})
     db_put(f"giveaway/claimed/{user_id}", claimed)
 
-def has_claimed(user_id, account_type):
-    claimed = get_claimed(user_id)
-    return any(c["type"] == account_type for c in claimed)
-
 def get_all_claimed():
     claimed_data = db_get("giveaway/claimed") or {}
     result = []
@@ -437,7 +422,7 @@ async def broadcast_message(context, msg, title="📢 ANNOUNCEMENT"):
         return 0, 0
 
 # ============================================================
-# ✅ ACCOUNT DETAILS (WITH EMOJIS)
+# ✅ ACCOUNT DETAILS
 # ============================================================
 ACCOUNT_DETAILS = {
     "cpm1_normal": (
@@ -498,7 +483,7 @@ ACCOUNT_DETAILS = {
 # ✅ START COMMAND
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Auto-delete the command message to keep chat clean
+    # Auto-delete command message
     if update.message:
         try:
             await update.message.delete()
@@ -779,7 +764,6 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("claim_"):
-        # Check if claiming is globally disabled
         if not get_claim_enabled():
             await edit_custom(
                 query,
@@ -896,6 +880,11 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_panel(update=None, context=None, query=None):
     if query:
         user_id = query.from_user.id
+        # Delete the old admin panel message
+        try:
+            await query.message.delete()
+        except:
+            pass
     else:
         user_id = update.effective_user.id
 
@@ -920,10 +909,17 @@ async def admin_panel(update=None, context=None, query=None):
         [InlineKeyboardButton("🔙 Back to Main", callback_data="start_back")],
     ]
 
-    if query:
-        await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
+    # Send new admin panel
+    if update and not query:
         await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
+    elif query:
+        # Send as new message (not edit) since we deleted the old one
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            entities=get_custom_entities(msg) if msg else None
+        )
 
 # ============================================================
 # ✅ BUTTON HANDLER
@@ -1094,12 +1090,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎉 CLAIM AGAIN EVENT 🎉"
             )
             
-            await edit_custom(
-                query,
-                f"✅ Claim Again event started!\n"
-                f"📤 Broadcast sent to {success} users.\n"
-                f"⏳ Timer: {limits['timer_hours']} hour\n"
-                f"💙 @Cpm_2test_bot"
+            # Delete old message and send new admin panel with broadcast count
+            await admin_panel(update, context, query)
+            # Send a quick confirmation message
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ Claim Again event started! 📤 Broadcast sent to {success} users.",
+                entities=get_custom_entities(f"✅ Claim Again event started! 📤 Broadcast sent to {success} users.")
             )
         except Exception as e:
             print(f"⚠️ Error in start_claimagain: {e}")
@@ -1128,12 +1125,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎊 PARTY TIME EVENT 🎊"
             )
             
-            await edit_custom(
-                query,
-                f"✅ Party Time event started!\n"
-                f"📤 Broadcast sent to {success} users.\n"
-                f"⏳ Timer: {limits['timer_hours']} hours\n"
-                f"💙 @Cpm_2test_bot"
+            await admin_panel(update, context, query)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ Party Time event started! 📤 Broadcast sent to {success} users.",
+                entities=get_custom_entities(f"✅ Party Time event started! 📤 Broadcast sent to {success} users.")
             )
         except Exception as e:
             print(f"⚠️ Error in start_partytime: {e}")
@@ -1152,7 +1148,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💙 Click /start to check current status.",
                 "⏹️ EVENT ENDED"
             )
-            await edit_custom(query, f"✅ Event ended!\n📤 Broadcast sent to {success} users.")
+            await admin_panel(update, context, query)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ Event ended! 📤 Broadcast sent to {success} users.",
+                entities=get_custom_entities(f"✅ Event ended! 📤 Broadcast sent to {success} users.")
+            )
         except Exception as e:
             print(f"⚠️ Error in end_event: {e}")
             await edit_custom(query, f"❌ Error ending event: {str(e)}")
@@ -1182,14 +1183,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = "🔒 CLAIMING DISABLED"
         
         success, failed = await broadcast_message(context, broadcast_msg, title)
-        # Refresh admin panel
+        
+        # Refresh admin panel (deletes old, sends new)
         await admin_panel(update, context, query)
-        # Optionally show a quick confirmation (admin_panel will overwrite it)
-        # We can send a notification via answer_callback_query
-        try:
-            await query.answer(f"Claim status toggled to {status_text}. Broadcast sent to {success} users.", show_alert=False)
-        except:
-            pass
+        # Send confirmation with broadcast count
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"✅ Claim status toggled to {status_text}. 📤 Broadcast sent to {success} users.",
+            entities=get_custom_entities(f"✅ Claim status toggled to {status_text}. 📤 Broadcast sent to {success} users.")
+        )
         return
 
     if data == "admin_back":
@@ -1388,14 +1390,23 @@ def run_bot():
 
     request = HTTPXRequest(
         connection_pool_size=20,
-        connect_timeout=60.0,
-        read_timeout=60.0,
-        write_timeout=60.0,
-        pool_timeout=60.0
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0
     )
 
     app = Application.builder().token(TOKEN).request(request).build()
 
+    # 🔥 FIX: Delete webhook to prevent conflict
+    async def setup_bot():
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            print("✅ Webhook deleted successfully!")
+        except Exception as e:
+            print(f"⚠️ Webhook deletion error: {e}")
+
+    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addaccount", addaccount_command))
     app.add_handler(CommandHandler("showaccounts", showaccounts_command))
@@ -1424,11 +1435,16 @@ def run_bot():
     print("📌 ALL ADMIN COMMANDS ARE ADMIN-ONLY")
     print("📌 Claim enable/disable + broadcast")
     print("📌 Auto-delete command messages")
+    print("📌 Admin panel auto-deletes old messages")
     print("=" * 50)
 
+    # Run setup
+    loop.run_until_complete(setup_bot())
+    
+    # Start polling with drop_pending_updates
     loop.run_until_complete(app.initialize())
     loop.run_until_complete(app.start())
-    loop.run_until_complete(app.updater.start_polling())
+    loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
     loop.run_forever()
 
 if __name__ == "__main__":
