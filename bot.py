@@ -2,7 +2,7 @@ import json, time, re, os, random as rnd, asyncio, logging, threading, sys, trac
 from datetime import datetime, timedelta, timezone
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.request import HTTPXRequest
 from flask import Flask
 
@@ -26,12 +26,20 @@ TOKEN = "8960961388:AAESbq3QLKlV0oh_ujBHUbvkvkzXNqLA3n0"
 ADMIN_ID = 6531314640
 COOLDOWN_HOURS = 24
 
+# ✅ VERIFICATION CHATS (inalis na ang mga IDs na binigay mo)
 REQUIRED_CHATS = [
     {"id": "@TnnrCPM", "name": "TnnrCPM Channel"},
     {"id": "@TnnrChat", "name": "TnnrChat Group"},
     {"id": "@markmwehehestore", "name": "MarkMwehehe Store"},
     {"id": "@markmwhehe", "name": "Mark Mwehehe Main Channel"},
+]
+
+# ✅ ANNOUNCEMENT CHATS (dito mag‑se‑send ng announcements)
+ANNOUNCEMENT_CHATS = [
+    {"id": -1004467306040, "name": "Main Group Chat"},
     {"id": -1003994249946, "name": "Tnnr Main Group"},
+    {"id": -1003846885691, "name": "Channel 1"},
+    {"id": -1003885017181, "name": "Channel 2"},
 ]
 
 FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
@@ -379,27 +387,76 @@ def get_all_users():
 def add_user(user_id):
     db_put(f"giveaway/users/{user_id}", {"timestamp": datetime.now().isoformat()})
 
-async def check_membership(context, user_id):
+# ============================================================
+# ✅ MEMBERSHIP CHECK (with retry & cache)
+# ============================================================
+async def check_membership(context, user_id, force_refresh=False):
+    """Check if user is in all required chats with cache and retry logic."""
     cache_key = f"{user_id}"
+    
+    # Force refresh - clear cache for this user
+    if force_refresh and cache_key in MEMBERSHIP_CACHE:
+        del MEMBERSHIP_CACHE[cache_key]
+    
+    # Check cache
     if cache_key in MEMBERSHIP_CACHE:
         cached_result, cached_time = MEMBERSHIP_CACHE[cache_key]
         if (datetime.now() - cached_time).seconds < 15:
             return cached_result
 
+    # For each required chat
     for chat in REQUIRED_CHATS:
+        chat_name = chat["name"]
+        chat_id = chat["id"]
+        
+        # Try to get the chat info first (to resolve numeric IDs)
         try:
-            chat_id = chat["id"] if isinstance(chat["id"], str) else int(chat["id"])
-            member = await context.bot.get_chat_member(chat_id, user_id)
+            if isinstance(chat_id, str):
+                clean_id = chat_id.lstrip('@')
+                try:
+                    chat_info = await context.bot.get_chat(chat_id)
+                    actual_chat_id = chat_info.id
+                except Exception as e:
+                    print(f"⚠️ Could not resolve chat {chat_id}: {e}")
+                    actual_chat_id = chat_id
+            else:
+                actual_chat_id = int(chat_id)
+                try:
+                    chat_info = await context.bot.get_chat(actual_chat_id)
+                except Exception as e:
+                    print(f"⚠️ Could not verify chat with ID {actual_chat_id}: {e}")
+        except Exception as e:
+            print(f"⚠️ Error resolving chat {chat_id}: {e}")
+            MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
+            return False, chat_name
+        
+        # Now check if user is a member
+        try:
+            member = await context.bot.get_chat_member(actual_chat_id, user_id)
             if member.status not in ["member", "administrator", "creator"]:
-                MEMBERSHIP_CACHE[cache_key] = ((False, chat["name"]), datetime.now())
-                return False, chat["name"]
-        except Exception:
-            MEMBERSHIP_CACHE[cache_key] = ((False, chat["name"]), datetime.now())
-            return False, chat["name"]
+                MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
+                return False, chat_name
+        except Exception as e:
+            # If we get an error, try once more after a small delay
+            print(f"⚠️ Membership check failed for {chat_name}: {e}")
+            await asyncio.sleep(1)
+            try:
+                member = await context.bot.get_chat_member(actual_chat_id, user_id)
+                if member.status not in ["member", "administrator", "creator"]:
+                    MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
+                    return False, chat_name
+            except Exception as e2:
+                print(f"⚠️ Retry failed for {chat_name}: {e2}")
+                MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
+                return False, chat_name
 
+    # All checks passed
     MEMBERSHIP_CACHE[cache_key] = ((True, None), datetime.now())
     return True, None
 
+# ============================================================
+# ✅ BROADCAST HELPERS
+# ============================================================
 async def broadcast_message(context, msg, title="📢 ANNOUNCEMENT"):
     try:
         users = get_all_users()
@@ -423,6 +480,26 @@ async def broadcast_message(context, msg, title="📢 ANNOUNCEMENT"):
     except Exception as e:
         print(f"⚠️ Broadcast error: {e}")
         return 0, 0
+
+async def send_announcement(context, msg, title="📢 ANNOUNCEMENT"):
+    """Send announcement to specific groups/channels"""
+    header = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    full_msg = header + msg
+    
+    success = 0
+    failed = 0
+    for chat in ANNOUNCEMENT_CHATS:
+        chat_id = chat["id"]
+        chat_name = chat["name"]
+        try:
+            await send_custom(chat_id, full_msg, context)
+            success += 1
+            print(f"✅ Announcement sent to {chat_name} ({chat_id})")
+            await asyncio.sleep(0.3)  # Small delay to avoid rate limits
+        except Exception as e:
+            print(f"⚠️ Failed to send announcement to {chat_name}: {e}")
+            failed += 1
+    return success, failed
 
 # ============================================================
 # ✅ ACCOUNT DETAILS
@@ -541,19 +618,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await reply_custom(update, f"⚠️ WARNING #{warnings}/5 ⚠️\n\nYou left a required group.\n🔄 Warnings: {warnings}/5\n❌ 5 warnings = PERMANENT BAN\n\n💙 Stay in all groups.", context)
 
+    # Check membership with force_refresh=False (use cache)
     is_member, missing = await check_membership(context, user_id)
     if not is_member:
         msg = "🔒 VERIFICATION REQUIRED 🔒\n\nYou must join ALL of the following:\n\n"
         for chat in REQUIRED_CHATS:
             msg += f"• {chat['name']}\n"
         msg += f"\n❌ Missing: {missing}\n\n👇 Click to join:"
-        keyboard = [
-            [InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")],
-            [InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")],
-            [InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")],
-            [InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")],
-            [InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")],
-        ]
+        keyboard = []
+        for chat in REQUIRED_CHATS:
+            if chat["id"] == "@TnnrCPM":
+                keyboard.append([InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")])
+            elif chat["id"] == "@TnnrChat":
+                keyboard.append([InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")])
+            elif chat["id"] == "@markmwehehestore":
+                keyboard.append([InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")])
+            elif chat["id"] == "@markmwhehe":
+                keyboard.append([InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")])
+        keyboard.append([InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")])
         await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -706,7 +788,8 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "check_verification":
-        is_member, missing = await check_membership(context, user_id)
+        # Force refresh membership check
+        is_member, missing = await check_membership(context, user_id, force_refresh=True)
         if is_member:
             reset_warnings(user_id)
             await edit_custom(
@@ -715,17 +798,23 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Start", callback_data="start_back")]])
             )
         else:
-            await edit_custom(
-                query,
-                f"❌ Still missing: {missing}\n\nPlease join ALL groups.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")],
-                    [InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")],
-                    [InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")],
-                    [InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")],
-                    [InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")],
-                ])
-            )
+            msg = f"❌ Still missing: {missing}\n\nPlease join ALL groups:\n\n"
+            for chat in REQUIRED_CHATS:
+                msg += f"• {chat['name']}\n"
+            
+            keyboard = []
+            for chat in REQUIRED_CHATS:
+                if chat["id"] == "@TnnrCPM":
+                    keyboard.append([InlineKeyboardButton("💙 TnnrCPM Channel", url="https://t.me/TnnrCPM")])
+                elif chat["id"] == "@TnnrChat":
+                    keyboard.append([InlineKeyboardButton("💙 TnnrChat Group", url="https://t.me/TnnrChat")])
+                elif chat["id"] == "@markmwehehestore":
+                    keyboard.append([InlineKeyboardButton("💙 MarkMwehehe Store", url="https://t.me/markmwehehestore")])
+                elif chat["id"] == "@markmwhehe":
+                    keyboard.append([InlineKeyboardButton("💙 Mark Mwehehe Main Channel", url="https://t.me/markmwhehe")])
+            
+            keyboard.append([InlineKeyboardButton("🔄 I've Joined! Check Again", callback_data="check_verification")])
+            await edit_custom(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data == "start_back":
@@ -878,7 +967,7 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ============================================================
-# ✅ ADMIN PANEL (with 🥵)
+# ✅ ADMIN PANEL (with 🥵 and Announcement button)
 # ============================================================
 async def admin_panel(update=None, context=None, query=None):
     if query:
@@ -909,6 +998,7 @@ async def admin_panel(update=None, context=None, query=None):
         [InlineKeyboardButton("🎉 Start Claim Again", callback_data="start_claimagain")],
         [InlineKeyboardButton("🎊 Start Party Time", callback_data="start_partytime")],
         [InlineKeyboardButton("⏹️ End Event", callback_data="end_event")],
+        [InlineKeyboardButton("📢 Send Announcement", callback_data="send_announcement")],  # NEW
         [InlineKeyboardButton("🔒 Disable Claim" if get_claim_enabled() else "🔓 Enable Claim", callback_data="toggle_claim")],
         [InlineKeyboardButton("🔙 Back to Main", callback_data="start_back")],
     ]
@@ -920,7 +1010,7 @@ async def admin_panel(update=None, context=None, query=None):
         await send_custom(user_id, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ============================================================
-# ✅ BUTTON HANDLER (FIXED - no recursion, all crashes handled)
+# ✅ BUTTON HANDLER (with Announcement)
 # ============================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -936,6 +1026,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⛔ Admin only!", show_alert=True)
         except:
             pass
+        return
+
+    # ✅ NEW: Send Announcement
+    if data == "send_announcement":
+        context.user_data['awaiting_announcement'] = True
+        await edit_custom(
+            query,
+            "📢 SEND ANNOUNCEMENT\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Please type your announcement message below.\n\n"
+            "📌 This will be sent to:\n"
+            "• Main Group Chat\n"
+            "• Tnnr Main Group\n"
+            "• Channel 1\n"
+            "• Channel 2\n\n"
+            "💙 Type your message now:"
+        )
         return
 
     if data == "add_accounts_menu":
@@ -1051,22 +1157,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_custom(query, "🗑️ SELECT POOL TO CLEAR:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # 🔥 FIXED: Clear pool without recursion
     if data.startswith("clearpool_"):
         try:
             pool_key = data.replace("clearpool_", "")
             load_accounts()
             ACCOUNT_POOLS[pool_key] = []
             save_accounts()
-            # Show confirmation then go back to admin panel
             await edit_custom(query, f"✅ Cleared all accounts in {pool_key.replace('_', ' ').upper()}")
             await asyncio.sleep(1)
-            # Now show admin panel again (no recursion)
             await admin_panel(update, context, query)
         except Exception as e:
             error_msg = f"❌ Error clearing pool: {str(e)}"
             await edit_custom(query, error_msg)
-            # Also send error to admin
             await send_custom(ADMIN_ID, f"⚠️ CLEAR POOL ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
@@ -1210,7 +1312,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ============================================================
-# ✅ MESSAGE HANDLER
+# ✅ MESSAGE HANDLER (with Announcement support)
 # ============================================================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1222,6 +1324,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id != ADMIN_ID:
         await reply_custom(update, "⛔ Admin only. ❌⚠️", context)
+        return
+
+    # ✅ NEW: Handle Announcement
+    if context.user_data.get('awaiting_announcement'):
+        if not text:
+            await reply_custom(update, "❌ Please send a text message for the announcement.", context)
+            return
+        
+        # Send announcement to all specified chats
+        success, failed = await send_announcement(
+            context,
+            text,
+            title="📢 ANNOUNCEMENT"
+        )
+        
+        context.user_data.pop('awaiting_announcement', None)
+        
+        await reply_custom(
+            update,
+            f"✅ Announcement sent!\n📤 Sent to: {success} chats\n❌ Failed: {failed}",
+            context
+        )
+        
+        # Refresh admin panel
+        await admin_panel(update, context)
         return
 
     if context.user_data.get('awaiting_unban'):
@@ -1431,7 +1558,7 @@ def run_bot_with_watchdog():
 
             app.add_handler(CallbackQueryHandler(details_handler, pattern="^details_"))
             app.add_handler(CallbackQueryHandler(claim_handler, pattern="^(claim_|addaccount_|check_verification|more_info|start_back|admin_back|share_confirmed)"))
-            app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|toggle_claim|admin_back)"))
+            app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|send_announcement|toggle_claim|admin_back)"))
 
             app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, message_handler))
             app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
@@ -1442,6 +1569,7 @@ def run_bot_with_watchdog():
             print("📌 Admin: @Maarkryan")
             print("📌 Auto-restart on crash enabled")
             print("📌 Crash logs will be sent to admin")
+            print("📌 Announcement feature active")
             print("=" * 50)
 
             # Run the bot
