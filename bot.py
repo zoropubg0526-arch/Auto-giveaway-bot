@@ -1,4 +1,4 @@
-import json, time, re, os, random as rnd, asyncio, logging, threading
+import json, time, re, os, random as rnd, asyncio, logging, threading, sys, traceback
 from datetime import datetime, timedelta, timezone
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
@@ -6,6 +6,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.request import HTTPXRequest
 from flask import Flask
 
+# ============================================================
+# ✅ FLASK (for Render health checks)
+# ============================================================
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
@@ -35,7 +38,7 @@ FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
 DB_URL = "https://cpm2bpt-default-rtdb.europe-west1.firebasedatabase.app"
 
 # ============================================================
-# ✅ CUSTOM EMOJI MAPPING
+# ✅ CUSTOM EMOJI MAPPING (including 🥵 for admin)
 # ============================================================
 CUSTOM_EMOJI_MAP = {
     '😂': '5406913184810409829', '😄': '5386587088873331829',
@@ -61,7 +64,7 @@ CUSTOM_EMOJI_MAP = {
     '⚡1': '6100277122935295595', '⚡2': '6100472578307002133',
     '⚡3': '6102404476071579522', '⚡4': '6100671388048166850',
     '⚡5': '6100278127957643014',
-    '🥵': '6307832826263768178',
+    '🥵': '6307832826263768178',  # ADMIN-ONLY
 }
 
 def get_custom_entities(text):
@@ -875,7 +878,7 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ============================================================
-# ✅ ADMIN PANEL
+# ✅ ADMIN PANEL (with 🥵)
 # ============================================================
 async def admin_panel(update=None, context=None, query=None):
     if query:
@@ -894,7 +897,8 @@ async def admin_panel(update=None, context=None, query=None):
         return
 
     status = "ENABLED ✅" if get_claim_enabled() else "DISABLED ❌"
-    msg = f"👑 ADMIN PANEL\n━━━━━━━━━━━━━━━━━━━━━\n\n📊 Claim Status: {status}\n\nSelect an action:"
+    # Added 🥵 admin-only emoji
+    msg = f"👑 ADMIN PANEL 🥵\n━━━━━━━━━━━━━━━━━━━━━\n\n📊 Claim Status: {status}\n\nSelect an action:"
     keyboard = [
         [InlineKeyboardButton("📥 Add Accounts", callback_data="add_accounts_menu")],
         [InlineKeyboardButton("📊 Show Inventory", callback_data="show_inventory")],
@@ -909,20 +913,14 @@ async def admin_panel(update=None, context=None, query=None):
         [InlineKeyboardButton("🔙 Back to Main", callback_data="start_back")],
     ]
 
-    # Send new admin panel
+    # Send new admin panel with custom emojis using send_custom
     if update and not query:
         await reply_custom(update, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
     elif query:
-        # Send as new message (not edit) since we deleted the old one
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            entities=get_custom_entities(msg) if msg else None
-        )
+        await send_custom(user_id, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ============================================================
-# ✅ BUTTON HANDLER
+# ✅ BUTTON HANDLER (FIXED - no recursion, all crashes handled)
 # ============================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1053,14 +1051,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_custom(query, "🗑️ SELECT POOL TO CLEAR:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+    # 🔥 FIXED: Clear pool without recursion
     if data.startswith("clearpool_"):
-        pool_key = data.replace("clearpool_", "")
-        load_accounts()
-        ACCOUNT_POOLS[pool_key] = []
-        save_accounts()
-        await edit_custom(query, f"✅ Cleared all accounts in {pool_key.replace('_', ' ').upper()}")
-        await asyncio.sleep(1)
-        await button_handler(update, context)
+        try:
+            pool_key = data.replace("clearpool_", "")
+            load_accounts()
+            ACCOUNT_POOLS[pool_key] = []
+            save_accounts()
+            # Show confirmation then go back to admin panel
+            await edit_custom(query, f"✅ Cleared all accounts in {pool_key.replace('_', ' ').upper()}")
+            await asyncio.sleep(1)
+            # Now show admin panel again (no recursion)
+            await admin_panel(update, context, query)
+        except Exception as e:
+            error_msg = f"❌ Error clearing pool: {str(e)}"
+            await edit_custom(query, error_msg)
+            # Also send error to admin
+            await send_custom(ADMIN_ID, f"⚠️ CLEAR POOL ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
     if data == "unban_user":
@@ -1090,17 +1097,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🎉 CLAIM AGAIN EVENT 🎉"
             )
             
-            # Delete old message and send new admin panel with broadcast count
             await admin_panel(update, context, query)
-            # Send a quick confirmation message
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ Claim Again event started! 📤 Broadcast sent to {success} users.",
-                entities=get_custom_entities(f"✅ Claim Again event started! 📤 Broadcast sent to {success} users.")
+            await send_custom(
+                user_id,
+                f"✅ Claim Again event started! 📤 Broadcast sent to {success} users.",
+                context
             )
         except Exception as e:
-            print(f"⚠️ Error in start_claimagain: {e}")
-            await edit_custom(query, f"❌ Error starting event: {str(e)}")
+            error_msg = f"❌ Error starting Claim Again: {str(e)}"
+            await edit_custom(query, error_msg)
+            await send_custom(ADMIN_ID, f"⚠️ CLAIM AGAIN ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
     if data == "start_partytime":
@@ -1126,14 +1132,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             await admin_panel(update, context, query)
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ Party Time event started! 📤 Broadcast sent to {success} users.",
-                entities=get_custom_entities(f"✅ Party Time event started! 📤 Broadcast sent to {success} users.")
+            await send_custom(
+                user_id,
+                f"✅ Party Time event started! 📤 Broadcast sent to {success} users.",
+                context
             )
         except Exception as e:
-            print(f"⚠️ Error in start_partytime: {e}")
-            await edit_custom(query, f"❌ Error starting event: {str(e)}")
+            error_msg = f"❌ Error starting Party Time: {str(e)}"
+            await edit_custom(query, error_msg)
+            await send_custom(ADMIN_ID, f"⚠️ PARTY TIME ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
     if data == "end_event":
@@ -1149,49 +1156,53 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⏹️ EVENT ENDED"
             )
             await admin_panel(update, context, query)
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ Event ended! 📤 Broadcast sent to {success} users.",
-                entities=get_custom_entities(f"✅ Event ended! 📤 Broadcast sent to {success} users.")
+            await send_custom(
+                user_id,
+                f"✅ Event ended! 📤 Broadcast sent to {success} users.",
+                context
             )
         except Exception as e:
-            print(f"⚠️ Error in end_event: {e}")
-            await edit_custom(query, f"❌ Error ending event: {str(e)}")
+            error_msg = f"❌ Error ending event: {str(e)}"
+            await edit_custom(query, error_msg)
+            await send_custom(ADMIN_ID, f"⚠️ END EVENT ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
     if data == "toggle_claim":
-        current = get_claim_enabled()
-        new_status = not current
-        set_claim_enabled(new_status)
-        status_text = "ENABLED" if new_status else "DISABLED"
-        
-        if new_status:
-            broadcast_msg = (
-                "✅ CLAIMING HAS BEEN ENABLED ✅\n\n"
-                "🎉 You can now claim accounts again!\n"
-                "🔥 Click /start to get your free account!\n"
-                "💙 @Cpm_2test_bot"
+        try:
+            current = get_claim_enabled()
+            new_status = not current
+            set_claim_enabled(new_status)
+            status_text = "ENABLED" if new_status else "DISABLED"
+            
+            if new_status:
+                broadcast_msg = (
+                    "✅ CLAIMING HAS BEEN ENABLED ✅\n\n"
+                    "🎉 You can now claim accounts again!\n"
+                    "🔥 Click /start to get your free account!\n"
+                    "💙 @Cpm_2test_bot"
+                )
+                title = "✅ CLAIMING ENABLED"
+            else:
+                broadcast_msg = (
+                    "🔒 CLAIMING HAS BEEN DISABLED 🔒\n\n"
+                    "⏳ The admin has temporarily disabled claiming.\n"
+                    "🔥 Please wait for updates.\n"
+                    "💙 @Cpm_2test_bot"
+                )
+                title = "🔒 CLAIMING DISABLED"
+            
+            success, failed = await broadcast_message(context, broadcast_msg, title)
+            
+            await admin_panel(update, context, query)
+            await send_custom(
+                user_id,
+                f"✅ Claim status toggled to {status_text}. 📤 Broadcast sent to {success} users.",
+                context
             )
-            title = "✅ CLAIMING ENABLED"
-        else:
-            broadcast_msg = (
-                "🔒 CLAIMING HAS BEEN DISABLED 🔒\n\n"
-                "⏳ The admin has temporarily disabled claiming.\n"
-                "🔥 Please wait for updates.\n"
-                "💙 @Cpm_2test_bot"
-            )
-            title = "🔒 CLAIMING DISABLED"
-        
-        success, failed = await broadcast_message(context, broadcast_msg, title)
-        
-        # Refresh admin panel (deletes old, sends new)
-        await admin_panel(update, context, query)
-        # Send confirmation with broadcast count
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"✅ Claim status toggled to {status_text}. 📤 Broadcast sent to {success} users.",
-            entities=get_custom_entities(f"✅ Claim status toggled to {status_text}. 📤 Broadcast sent to {success} users.")
-        )
+        except Exception as e:
+            error_msg = f"❌ Error toggling claim: {str(e)}"
+            await edit_custom(query, error_msg)
+            await send_custom(ADMIN_ID, f"⚠️ TOGGLE CLAIM ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
         return
 
     if data == "admin_back":
@@ -1335,8 +1346,9 @@ async def claimagain_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             context
         )
     except Exception as e:
-        print(f"⚠️ Error in claimagain_command: {e}")
-        await reply_custom(update, f"❌ Error starting event: {str(e)}", context)
+        error_msg = f"❌ Error in claimagain command: {str(e)}"
+        await reply_custom(update, error_msg, context)
+        await send_custom(ADMIN_ID, f"⚠️ CLAIMAGAIN COMMAND ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
 
 async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1363,8 +1375,9 @@ async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT
             context
         )
     except Exception as e:
-        print(f"⚠️ Error in undermaintinance_command: {e}")
-        await reply_custom(update, f"❌ Error sending maintenance: {str(e)}", context)
+        error_msg = f"❌ Error in maintenance command: {str(e)}"
+        await reply_custom(update, error_msg, context)
+        await send_custom(ADMIN_ID, f"⚠️ MAINTENANCE COMMAND ERROR:\n{error_msg}\n{traceback.format_exc()}", context)
 
 async def addaccount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
@@ -1382,74 +1395,100 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
 
 # ============================================================
-# ✅ RUN BOT
+# ✅ WATCHDOG: AUTO-RESTART ON CRASH + NOTIFY ADMIN
 # ============================================================
-def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    request = HTTPXRequest(
-        connection_pool_size=20,
-        connect_timeout=30.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=30.0
-    )
-
-    app = Application.builder().token(TOKEN).request(request).build()
-
-    # 🔥 FIX: Delete webhook to prevent conflict
-    async def setup_bot():
+def run_bot_with_watchdog():
+    """Runs the bot and restarts it if it crashes, sending error to admin."""
+    while True:
         try:
-            await app.bot.delete_webhook(drop_pending_updates=True)
-            print("✅ Webhook deleted successfully!")
+            # Setup the application
+            request = HTTPXRequest(
+                connection_pool_size=20,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                write_timeout=30.0,
+                pool_timeout=30.0
+            )
+            app = Application.builder().token(TOKEN).request(request).build()
+
+            # Delete webhook to prevent conflict
+            async def setup_bot():
+                try:
+                    await app.bot.delete_webhook(drop_pending_updates=True)
+                    print("✅ Webhook deleted successfully!")
+                except Exception as e:
+                    print(f"⚠️ Webhook deletion error: {e}")
+
+            # Add handlers
+            app.add_handler(CommandHandler("start", start))
+            app.add_handler(CommandHandler("addaccount", addaccount_command))
+            app.add_handler(CommandHandler("showaccounts", showaccounts_command))
+            app.add_handler(CommandHandler("showthemakulit", showthemakulit_command))
+            app.add_handler(CommandHandler("clearpool", clearpool_command))
+            app.add_handler(CommandHandler("unban", unban_command))
+            app.add_handler(CommandHandler("claimagain", claimagain_command))
+            app.add_handler(CommandHandler("undermaintinance", undermaintinance_command))
+
+            app.add_handler(CallbackQueryHandler(details_handler, pattern="^details_"))
+            app.add_handler(CallbackQueryHandler(claim_handler, pattern="^(claim_|addaccount_|check_verification|more_info|start_back|admin_back|share_confirmed)"))
+            app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|toggle_claim|admin_back)"))
+
+            app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, message_handler))
+            app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
+
+            print("=" * 50)
+            print("🎁 GIVEAWAY BOT STARTED (WATCHDOG ACTIVE)")
+            print("📌 Bot: @Cpm_2test_bot")
+            print("📌 Admin: @Maarkryan")
+            print("📌 Auto-restart on crash enabled")
+            print("📌 Crash logs will be sent to admin")
+            print("=" * 50)
+
+            # Run the bot
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(setup_bot())
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
+            loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
+            loop.run_forever()
+
         except Exception as e:
-            print(f"⚠️ Webhook deletion error: {e}")
+            # Capture the error
+            error_trace = traceback.format_exc()
+            error_msg = f"❌ BOT CRASHED!\nTime: {datetime.now().isoformat()}\nError: {str(e)}\n\nTraceback:\n{error_trace}"
+            print(error_msg)
 
-    # Add handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addaccount", addaccount_command))
-    app.add_handler(CommandHandler("showaccounts", showaccounts_command))
-    app.add_handler(CommandHandler("showthemakulit", showthemakulit_command))
-    app.add_handler(CommandHandler("clearpool", clearpool_command))
-    app.add_handler(CommandHandler("unban", unban_command))
-    app.add_handler(CommandHandler("claimagain", claimagain_command))
-    app.add_handler(CommandHandler("undermaintinance", undermaintinance_command))
+            # Try to send error to admin (using a fresh bot instance)
+            try:
+                import asyncio
+                async def send_crash_report():
+                    temp_app = Application.builder().token(TOKEN).build()
+                    await temp_app.initialize()
+                    await temp_app.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"⚠️ BOT CRASH REPORT\n\n{error_msg[:4000]}"
+                    )
+                    await temp_app.shutdown()
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(send_crash_report())
+            except Exception as report_e:
+                print(f"Failed to send crash report: {report_e}")
 
-    app.add_handler(CallbackQueryHandler(details_handler, pattern="^details_"))
-    app.add_handler(CallbackQueryHandler(claim_handler, pattern="^(claim_|addaccount_|check_verification|more_info|start_back|admin_back|share_confirmed)"))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(add_accounts_menu|show_inventory|show_claimed|show_makulit|clear_pool|clearpool_|unban_user|start_claimagain|start_partytime|end_event|toggle_claim|admin_back)"))
+            # Wait a bit then restart
+            print("🔄 Restarting bot in 5 seconds...")
+            time.sleep(5)
+            # Continue the loop to restart
 
-    app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, message_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
-
-    print("=" * 50)
-    print("🎁 GIVEAWAY BOT WITH VERIFICATION")
-    print("📌 Bot: @Cpm_2test_bot")
-    print("📌 Admin: /addaccount - opens admin panel")
-    print("📌 Admin: /claimagain - start Claim Again event")
-    print("📌 Admin: /undermaintinance - broadcast maintenance")
-    print("📌 Verification: Share to 3-5 groups + join required chats")
-    print("📌 Account details preview before claiming")
-    print("📌 24-hour cooldown, Event system, Full inventory")
-    print("📌 ALL ADMIN COMMANDS ARE ADMIN-ONLY")
-    print("📌 Claim enable/disable + broadcast")
-    print("📌 Auto-delete command messages")
-    print("📌 Admin panel auto-deletes old messages")
-    print("=" * 50)
-
-    # Run setup
-    loop.run_until_complete(setup_bot())
-    
-    # Start polling with drop_pending_updates
-    loop.run_until_complete(app.initialize())
-    loop.run_until_complete(app.start())
-    loop.run_until_complete(app.updater.start_polling(drop_pending_updates=True))
-    loop.run_forever()
-
+# ============================================================
+# ✅ MAIN ENTRY POINT
+# ============================================================
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    # Run bot with watchdog in a separate thread
+    bot_thread = threading.Thread(target=run_bot_with_watchdog, daemon=True)
     bot_thread.start()
-    print("✅ Bot thread started!")
+    print("✅ Bot thread started with watchdog!")
+    # Run Flask for health checks
     app_flask.run(host="0.0.0.0", port=PORT)
