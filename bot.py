@@ -26,7 +26,7 @@ TOKEN = "8960961388:AAESbq3QLKlV0oh_ujBHUbvkvkzXNqLA3n0"
 ADMIN_ID = 6531314640
 COOLDOWN_HOURS = 24
 
-# ✅ VERIFICATION CHATS (with exact links)
+# ✅ VERIFICATION CHATS
 REQUIRED_CHATS = [
     {"id": "@TnnrCPM", "name": "TnnrCPM Channel", "link": "https://t.me/TnnrCPM"},
     {"id": "@TnnrChat", "name": "TnnrChat Group", "link": "https://t.me/TnnrChat"},
@@ -34,7 +34,7 @@ REQUIRED_CHATS = [
     {"id": "@markmwhehe", "name": "Mark Mwehehe Main Channel", "link": "https://t.me/markmwhehe"},
 ]
 
-# ✅ ANNOUNCEMENT CHATS (channels only, removed groups)
+# ✅ ANNOUNCEMENT CHATS (channels only)
 ANNOUNCEMENT_CHATS = [
     {"id": -1003846885691, "name": "Channel 1"},
     {"id": -1003885017181, "name": "Channel 2"},
@@ -140,7 +140,7 @@ async def edit_custom(query, text, reply_markup=None):
                 pass
 
 # ============================================================
-# ✅ ASYNC FIREBASE HELPERS (using aiohttp)
+# ✅ ASYNC FIREBASE HELPERS
 # ============================================================
 async def db_put(path, data):
     url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
@@ -393,24 +393,31 @@ async def add_user(user_id):
     await db_put(f"giveaway/users/{user_id}", {"timestamp": datetime.now().isoformat()})
 
 # ============================================================
-# ✅ MEMBERSHIP CHECK (with cache & retry)
+# ✅ MEMBERSHIP CHECK (with multiple retries)
 # ============================================================
 async def check_membership(context, user_id, force_refresh=False):
     cache_key = f"{user_id}"
+    
+    # Force refresh - clear cache
     if force_refresh and cache_key in MEMBERSHIP_CACHE:
         del MEMBERSHIP_CACHE[cache_key]
     
+    # Check cache (5 seconds only)
     if cache_key in MEMBERSHIP_CACHE:
         cached_result, cached_time = MEMBERSHIP_CACHE[cache_key]
-        if (datetime.now() - cached_time).seconds < 15:
+        if (datetime.now() - cached_time).seconds < 5:
             return cached_result
 
+    # For each required chat
     for chat in REQUIRED_CHATS:
         chat_name = chat["name"]
         chat_id = chat["id"]
+        
+        # Resolve chat ID
+        actual_chat_id = None
         try:
             if isinstance(chat_id, str):
-                clean_id = chat_id.lstrip('@')
+                # Try to get chat info
                 try:
                     chat_info = await context.bot.get_chat(chat_id)
                     actual_chat_id = chat_info.id
@@ -419,39 +426,39 @@ async def check_membership(context, user_id, force_refresh=False):
                     actual_chat_id = chat_id
             else:
                 actual_chat_id = int(chat_id)
-                try:
-                    chat_info = await context.bot.get_chat(actual_chat_id)
-                except Exception as e:
-                    print(f"⚠️ Could not verify chat with ID {actual_chat_id}: {e}")
         except Exception as e:
             print(f"⚠️ Error resolving chat {chat_id}: {e}")
             MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
             return False, chat_name
         
-        try:
-            member = await context.bot.get_chat_member(actual_chat_id, user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
-                return False, chat_name
-        except Exception as e:
-            # Retry after 3 seconds (sometimes Telegram needs time to sync)
-            print(f"⚠️ Membership check failed for {chat_name}: {e}")
-            await asyncio.sleep(3)
+        # Check membership with retries
+        member_status = None
+        for attempt in range(3):  # 3 attempts
             try:
                 member = await context.bot.get_chat_member(actual_chat_id, user_id)
-                if member.status not in ["member", "administrator", "creator"]:
-                    MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
-                    return False, chat_name
-            except Exception as e2:
-                print(f"⚠️ Retry failed for {chat_name}: {e2}")
-                MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
-                return False, chat_name
+                if member.status in ["member", "administrator", "creator"]:
+                    member_status = True
+                    break
+                else:
+                    member_status = False
+                    break
+            except Exception as e:
+                print(f"⚠️ Attempt {attempt+1} failed for {chat_name}: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(0.5)  # Small delay between retries
+                else:
+                    member_status = False
+        
+        if not member_status:
+            MEMBERSHIP_CACHE[cache_key] = ((False, chat_name), datetime.now())
+            return False, chat_name
 
+    # All checks passed
     MEMBERSHIP_CACHE[cache_key] = ((True, None), datetime.now())
     return True, None
 
 # ============================================================
-# ✅ BROADCAST & ANNOUNCEMENT (ASYNC)
+# ✅ BROADCAST & ANNOUNCEMENT (optimized)
 # ============================================================
 async def broadcast_to_users(context, msg, title, admin_id):
     try:
@@ -492,22 +499,34 @@ async def broadcast_message_background(context, msg, title, admin_id):
     context.application.create_task(broadcast_to_users(context, msg, title, admin_id))
 
 async def send_announcement_to_channels(context, msg, title, admin_id):
+    """Send announcement to channels using asyncio.gather for speed."""
     try:
         header = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         full_msg = header + msg
-        success = 0
-        failed = 0
-        for chat in ANNOUNCEMENT_CHATS:
+        
+        # Prepare tasks for all channels
+        async def send_to_channel(chat):
             chat_id = chat["id"]
             chat_name = chat["name"]
             try:
                 await send_custom(chat_id, full_msg, context)
-                success += 1
-                await asyncio.sleep(0.3)
+                return True, chat_name
             except Exception as e:
                 print(f"⚠️ Failed to send announcement to {chat_name}: {e}")
-                failed += 1
-        await send_custom(admin_id, f"✅ Announcement sent to {success} channels.\n❌ Failed: {failed}", context)
+                return False, chat_name
+        
+        # Send to all channels concurrently
+        tasks = [send_to_channel(chat) for chat in ANNOUNCEMENT_CHATS]
+        results = await asyncio.gather(*tasks)
+        
+        success = sum(1 for r in results if r[0])
+        failed = len(results) - success
+        
+        await send_custom(
+            admin_id,
+            f"✅ Announcement sent to {success} channels.\n❌ Failed: {failed}",
+            context
+        )
     except Exception as e:
         error_msg = f"❌ Announcement error: {str(e)}"
         print(error_msg)
@@ -783,7 +802,7 @@ async def details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_custom(query, details_msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ============================================================
-# ✅ CLAIM HANDLER
+# ✅ CLAIM HANDLER (with force refresh on verification)
 # ============================================================
 async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -800,7 +819,7 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "check_verification":
-        await asyncio.sleep(3)  # Wait for Telegram to sync
+        # Force refresh - clear cache and check again immediately
         is_member, missing = await check_membership(context, user_id, force_refresh=True)
         if is_member:
             await reset_warnings(user_id)
@@ -970,14 +989,13 @@ async def claim_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # ============================================================
-# ✅ ADMIN PANEL (with private chat check)
+# ✅ ADMIN PANEL
 # ============================================================
 async def admin_panel(update=None, context=None, query=None):
-    # Check if we are in a private chat
-    if update and update.effective_chat.type not in ["private"]:
+    if update and update.effective_chat.type != "private":
         await reply_custom(update, "⚠️ Admin panel is only available in private chat.", context)
         return
-    if query and query.message.chat.type not in ["private"]:
+    if query and query.message.chat.type != "private":
         await query.answer("⚠️ Use private chat for admin panel.", show_alert=True)
         return
 
@@ -1018,7 +1036,7 @@ async def admin_panel(update=None, context=None, query=None):
         await send_custom(user_id, msg, context, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ============================================================
-# ✅ BUTTON HANDLER (with private chat check)
+# ✅ BUTTON HANDLER
 # ============================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1030,7 +1048,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     chat_type = query.message.chat.type
 
-    # Only allow admin actions in private chat
     if chat_type != "private":
         await query.answer("⚠️ Admin actions only available in private chat.", show_alert=True)
         return
@@ -1163,7 +1180,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ACCOUNT_POOLS[pool_key] = []
             await save_accounts()
             await edit_custom(query, f"✅ Cleared all accounts in {pool_key.replace('_', ' ').upper()}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
             await admin_panel(update, context, query)
         except Exception as e:
             error_msg = f"❌ Error clearing pool: {str(e)}"
@@ -1311,9 +1328,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.effective_chat.type
 
-    # Ignore messages from groups unless they are from admin and we need to handle something
     if chat_type != "private":
-        # Only respond to admin if they send something in group? We'll ignore.
         return
 
     text = update.message.text.strip() if update.message.text else None
@@ -1480,7 +1495,6 @@ async def undermaintinance_command(update: Update, context: ContextTypes.DEFAULT
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"💙 @Cpm_2test_bot"
         )
-        # This one still broadcasts to all users (maintenance)
         await broadcast_message_background(context, broadcast_msg, "🛠️ MAINTENANCE ⚡5", update.effective_user.id)
         await reply_custom(
             update,
@@ -1551,9 +1565,9 @@ def run_bot_with_watchdog():
             print("📌 Admin: @Maarkryan")
             print("📌 Auto-restart on crash enabled")
             print("📌 All Firebase operations are ASYNC - NO LAG")
-            print("📌 Announcements sent to channels only")
+            print("📌 Announcements sent to channels only (concurrent)")
             print("📌 Admin panel only in private chat")
-            print("📌 Verification with 3-second sync delay")
+            print("📌 Verification with retry (3 attempts)")
             print("=" * 50)
 
             loop = asyncio.new_event_loop()
