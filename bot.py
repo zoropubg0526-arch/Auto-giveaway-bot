@@ -1,6 +1,5 @@
 import json, time, re, os, random as rnd, asyncio, logging, threading, sys, traceback
 from datetime import datetime, timedelta, timezone
-import aiohttp
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -42,9 +41,6 @@ ANNOUNCEMENT_CHATS = [
     {"id": -1003846885691, "name": "Channel 1"},
     {"id": -1003885017181, "name": "Channel 2"},
 ]
-
-FIREBASE_API_KEY = "ph2yty6YZsJCU4oOFZi901HN4sGo7Ehtie94p7KX"
-DB_URL = "https://cpm2bpt-default-rtdb.europe-west1.firebasedatabase.app"
 
 # ============================================================
 # ✅ CUSTOM EMOJI MAPPING
@@ -159,27 +155,75 @@ async def send_file(chat_id, filename, content, context, caption=None):
         return False
 
 # ============================================================
-# ✅ ASYNC FIREBASE HELPERS
+# ✅ LOCAL JSON DATABASE SETUP (Replaces Firebase)
 # ============================================================
+DB_FILE = "database.json"
+
+# Initialize DB file if it doesn't exist
+if not os.path.exists(DB_FILE):
+    with open(DB_FILE, "w") as f:
+        json.dump({"giveaway": {}}, f)
+
+db_lock = asyncio.Lock()
+
 async def db_put(path, data):
-    url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
-    async with aiohttp.ClientSession() as session:
-        async with session.put(url, json=data) as resp:
-            return resp.status in (200, 204)
+    async with db_lock:
+        try:
+            with open(DB_FILE, "r") as f:
+                db = json.load(f)
+        except Exception:
+            db = {}
+
+        keys = path.split('/')
+        curr = db
+        for key in keys[:-1]:
+            if key not in curr or not isinstance(curr[key], dict):
+                curr[key] = {}
+            curr = curr[key]
+        curr[keys[-1]] = data
+
+        with open(DB_FILE, "w") as f:
+            json.dump(db, f, indent=4)
+        return True
 
 async def db_get(path):
-    url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.json()
+    async with db_lock:
+        try:
+            with open(DB_FILE, "r") as f:
+                db = json.load(f)
+        except Exception:
             return None
 
+        keys = path.split('/')
+        curr = db
+        for key in keys:
+            if isinstance(curr, dict) and key in curr:
+                curr = curr[key]
+            else:
+                return None
+        return curr
+
 async def db_delete(path):
-    url = f"{DB_URL}/{path}.json?auth={FIREBASE_API_KEY}"
-    async with aiohttp.ClientSession() as session:
-        async with session.delete(url) as resp:
-            return resp.status in (200, 204)
+    async with db_lock:
+        try:
+            with open(DB_FILE, "r") as f:
+                db = json.load(f)
+        except Exception:
+            return False
+
+        keys = path.split('/')
+        curr = db
+        for key in keys[:-1]:
+            if key not in curr or not isinstance(curr[key], dict):
+                return False
+            curr = curr[key]
+        
+        if keys[-1] in curr:
+            del curr[keys[-1]]
+            with open(DB_FILE, "w") as f:
+                json.dump(db, f, indent=4)
+            return True
+        return False
 
 # ============================================================
 # ✅ CLAIM ENABLE/DISABLE
@@ -412,7 +456,7 @@ async def add_user(user_id):
     await db_put(f"giveaway/users/{user_id}", {"timestamp": datetime.now().isoformat()})
 
 # ============================================================
-# ✅ MEMBERSHIP CHECK (TnnrChat removed from verification)
+# ✅ MEMBERSHIP CHECK
 # ============================================================
 async def check_membership(context, user_id, force_refresh=False):
     cache_key = f"{user_id}"
@@ -1550,13 +1594,10 @@ def run_bot_with_watchdog():
             app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_chat_member_handler))
 
             print("=" * 50)
-            print("🎁 GIVEAWAY BOT STARTED (WATCHDOG ACTIVE)")
+            print("🎁 GIVEAWAY BOT STARTED (LOCAL JSON FAST MODE)")
             print("📌 Bot: @Cpm_2test_bot")
             print("📌 Admin: @Maarkryan")
             print("📌 Auto-restart on crash enabled")
-            print("📌 TnnrChat removed from verification")
-            print("📌 Claimed accounts sent as .txt file")
-            print("📌 Events are instant (no broadcast)")
             print("=" * 50)
 
             loop = asyncio.new_event_loop()
